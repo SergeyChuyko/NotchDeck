@@ -53,17 +53,17 @@ jobs:
 
             Как открыть:
 
-            ![Диалог «Файл «NotchDeck» не был открыт»](https://raw.githubusercontent.com/SergeyChuyko/NotchDeck/main/Docs/media/gatekeeper-blocked.png)
+            ![Диалог «Файл «NotchDeck» не был открыт»](https://raw.githubusercontent.com/SergeyChuyko/NotchDeck/${{ github.sha }}/Docs/media/gatekeeper-blocked.png)
 
             1. Нажмите «Готово» в этом диалоге, затем откройте Системные
                настройки → Конфиденциальность и безопасность:
 
-            ![Конфиденциальность и безопасность](https://raw.githubusercontent.com/SergeyChuyko/NotchDeck/main/Docs/media/gatekeeper-settings-path.png)
+            ![Конфиденциальность и безопасность](https://raw.githubusercontent.com/SergeyChuyko/NotchDeck/${{ github.sha }}/Docs/media/gatekeeper-settings-path.png)
 
             2. Прокрутите вниз до блока «Безопасность» — там будет строка
                «Файл «NotchDeck» заблокирован для защиты Вашего Mac». Нажмите
                «Все равно открыть» и подтвердите ещё раз в диалоге.
 
-            ![Блок «Безопасность» с кнопкой «Все равно открыть»](https://raw.githubusercontent.com/SergeyChuyko/NotchDeck/main/Docs/media/gatekeeper-open-anyway.png)
+            ![Блок «Безопасность» с кнопкой «Все равно открыть»](https://raw.githubusercontent.com/SergeyChuyko/NotchDeck/${{ github.sha }}/Docs/media/gatekeeper-open-anyway.png)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
