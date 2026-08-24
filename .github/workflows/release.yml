@@ -1,0 +1,58 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          XCODE_PATH=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$XCODE_PATH" ]; then
+            echo "No Xcode 26.x found on this runner; falling back to default." >&2
+            xcodebuild -version
+          else
+            sudo xcode-select -s "$XCODE_PATH"
+          fi
+
+      - name: Build (ad-hoc signed, no dev account needed)
+        run: |
+          xcodebuild -project NotchDeck.xcodeproj \
+            -target NotchDeck \
+            -configuration Release \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM="" \
+            CODE_SIGNING_REQUIRED=YES \
+            CODE_SIGNING_ALLOWED=YES \
+            CONFIGURATION_BUILD_DIR=build \
+            build
+
+      - name: Zip app
+        run: |
+          cd build
+          ditto -c -k --sequesterRsrc --keepParent NotchDeck.app "$GITHUB_WORKSPACE/NotchDeck.zip"
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: NotchDeck.zip
+          body: |
+            Приложение не подписано Apple Developer ID (нет платного аккаунта),
+            поэтому macOS Gatekeeper при первом запуске откажется его открывать.
+
+            Как открыть:
+            1. Распакуйте архив и перетащите NotchDeck.app в Программы.
+            2. Кликните по нему правой кнопкой (или Control+клик) → «Открыть» →
+               подтвердите «Открыть» в диалоге.
+            3. Если пункта «Открыть» нет — откройте Системные настройки →
+               Конфиденциальность и безопасность и нажмите «Открыть в любом случае»
+               рядом с упоминанием NotchDeck.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
