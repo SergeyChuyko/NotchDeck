@@ -11,7 +11,9 @@
 
 ## Скачать
 
-[![Скачать](Docs/media/download-button.svg)](../../releases/latest)
+<p align="center">
+  <a href="../../releases/latest"><img src="Docs/media/download-button.svg" alt="Download" /></a>
+</p>
 
 Скачайте `NotchDeck.zip`, распакуйте и перетащите `NotchDeck.app` в
 Программы.
