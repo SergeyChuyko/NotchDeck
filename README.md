@@ -11,8 +11,10 @@
 
 ## Скачать
 
-Готовая сборка — на странице [Releases](../../releases/latest): скачайте
-`NotchDeck.zip`, распакуйте и перетащите `NotchDeck.app` в Программы.
+[![Скачать](Docs/media/download-button.svg)](../../releases/latest)
+
+Скачайте `NotchDeck.zip`, распакуйте и перетащите `NotchDeck.app` в
+Программы.
 
 Xcode для этого не нужен. Но приложение не подписано Apple Developer ID (это
 платная подписка, а сборка бесплатная), поэтому при первом запуске macOS
