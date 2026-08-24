@@ -7,10 +7,10 @@
     </linearGradient>
   </defs>
   <rect width="220" height="64" rx="14" fill="url(#g)"/>
-  <g fill="#ffffff">
-    <rect x="38" y="16" width="10" height="16" rx="5"/>
-    <path d="M27 30 L59 30 L43 48 Z"/>
-    <rect x="29" y="44" width="28" height="5" rx="2.5"/>
+  <g transform="translate(30,15)" stroke="#ffffff" stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M14 2 L14 20"/>
+    <path d="M4 12 L14 22 L24 12"/>
+    <path d="M2 27 L2 30 Q2 34 6 34 L22 34 Q26 34 26 30 L26 27"/>
   </g>
   <text x="150" y="40" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Helvetica, Arial, sans-serif" font-size="23" font-weight="700" letter-spacing="0.2" fill="#ffffff" text-anchor="middle">Download</text>
 </svg>
