@@ -1,43 +1,55 @@
 # NotchDeck
 
-A hover panel that lives under the notch of a MacBook. Move the pointer to the notch and
-the deck slides out; move away and it folds back. No window, no Dock icon — the app runs
-as a menu-bar accessory.
+Плашка, которая живёт под чёлкой MacBook. Наводишь курсор на чёлку — панель
+выезжает; уводишь курсор — сворачивается обратно. Без окна, без иконки в Dock —
+приложение работает как аксессуар в строке меню.
 
-Five sections: **Player**, **Search**, **Screenshots**, **Clipboard**, **Translator**,
-plus a top strip with battery and a Wi-Fi toggle.
+Пять разделов: **плеер**, **поиск**, **скриншоты**, **буфер обмена**,
+**переводчик**, плюс верхняя полоса с зарядом батареи и переключателем Wi-Fi.
 
-> Interface language is Russian. Source comments are Russian too.
+![NotchDeck hover](Docs/media/hero.gif)
 
-## Sections
+<p>
+  <img src="Docs/media/player.png" width="19%" alt="Раздел «Плеер»" />
+  <img src="Docs/media/search.png" width="19%" alt="Раздел «Поиск»" />
+  <img src="Docs/media/screenshots.png" width="19%" alt="Раздел «Скриншоты»" />
+  <img src="Docs/media/clipboard.png" width="19%" alt="Раздел «Буфер обмена»" />
+  <img src="Docs/media/translator.png" width="19%" alt="Раздел «Переводчик»" />
+</p>
 
-- **Player** — what is playing anywhere in the system (Music, Spotify, video in a browser):
-  artwork, title, scrubbable position, transport controls. When the deck is collapsed, a small
-  equalizer tinted by the artwork sits next to the notch.
-- **Search** — a query field that opens Google in the default browser. While the field has
-  focus the deck stays open, so moving the pointer away mid-typing does not close it.
-- **Screenshots** — a grid of recent screen captures, newest first. Click copies (both the
-  file and the image, since apps expect one or the other), drag pulls the file out, the
-  buttons on a card open it or move it to the Trash. The folder is read from
-  `com.apple.screencapture`, and files are recognized by Spotlight's `kMDItemIsScreenCapture`
-  flag rather than by name, which is localized.
-- **Clipboard** — history of copied text with pinning. Entries marked
-  `org.nspasteboard.ConcealedType` (password managers) are never stored.
-- **Translator** — Russian ↔ English on top of the system `Translation` framework. Runs
-  locally, needs no key and no network; macOS downloads the language pack on first use.
+## Разделы
 
-## Requirements
+- **Плеер** — что играет где-либо в системе (Music, Spotify, видео в браузере):
+  обложка, название, перемотка позиции, кнопки управления. Когда панель свёрнута,
+  рядом с чёлкой остаётся маленький эквалайзер, подсвеченный цветом обложки.
+- **Поиск** — поле запроса, открывающее Google в браузере по умолчанию. Пока
+  поле в фокусе, панель не закрывается, так что увод курсора во время набора
+  текста её не сворачивает.
+- **Скриншоты** — сетка последних снимков экрана, новые сверху. Клик копирует
+  (сразу и файл, и изображение, поскольку одним приложениям нужен файл, а
+  другим — картинка), перетаскивание вытаскивает файл, кнопки на карточке
+  открывают его или отправляют в Корзину. Папка берётся из
+  `com.apple.screencapture`, а файлы распознаются по флагу Spotlight
+  `kMDItemIsScreenCapture`, а не по имени файла, которое локализовано.
+- **Буфер обмена** — история скопированного текста с закреплением. Записи с
+  пометкой `org.nspasteboard.ConcealedType` (менеджеры паролей) никогда не
+  сохраняются.
+- **Переводчик** — русский ↔ английский поверх системного фреймворка
+  `Translation`. Работает локально, без ключей и без сети; языковой пакет
+  macOS скачивает сама при первом использовании.
 
-- macOS 26.1 or later (the deployment target; the app uses the `Translation` framework and
-  current SwiftUI APIs)
-- Xcode 26 or later
-- A Mac with a notch — on other displays the panel still works, but it is designed for the
-  notch cutout and its geometry is derived from the screen's `safeAreaInsets`
+## Требования
 
-The app is **not sandboxed** (`ENABLE_APP_SANDBOX = NO`), because the media bridge below
-spawns a subprocess.
+- macOS 26.1 или новее (deployment target; приложение использует фреймворк
+  `Translation` и актуальные API SwiftUI)
+- Xcode 26 или новее
+- Mac с чёлкой — на других экранах панель тоже работает, но она рассчитана на
+  вырез чёлки, и её геометрия берётся из `safeAreaInsets` экрана
 
-## Build
+Приложение **не в песочнице** (`ENABLE_APP_SANDBOX = NO`), потому что медиа-мост
+ниже запускает подпроцесс.
+
+## Сборка
 
 ```sh
 git clone https://github.com/SergeyChuyko/NotchDeck.git
@@ -45,40 +57,42 @@ cd NotchDeck
 open NotchDeck.xcodeproj
 ```
 
-Then set your own signing team in the target's *Signing & Capabilities* and run. There are
-no third-party dependencies and nothing to install first.
+Дальше нужно указать свою команду подписи в *Signing & Capabilities* таргета и
+запустить. Сторонних зависимостей нет, ставить ничего заранее не нужно.
 
-On first use of the Screenshots section macOS asks for access to the folder where captures
-are saved (usually Desktop). Without that grant the section shows an explanatory message
-instead of the grid.
+При первом обращении к разделу «Скриншоты» macOS запросит доступ к папке, куда
+сохраняются снимки (обычно это Рабочий стол). Без этого разрешения раздел
+показывает пояснение вместо сетки.
 
-## How the media bridge works
+## Как устроен медиа-мост
 
-Since macOS 15.4 the private `MediaRemote` framework answers only to processes signed by
-Apple. A regular app gets an empty response — no client, PID 0, empty dictionary — even
-while music is playing, and there is no public replacement (`MPNowPlayingInfoCenter` returns
-only what your own app put there).
+Начиная с macOS 15.4 приватный фреймворк `MediaRemote` отвечает только
+процессам, подписанным Apple. Обычное приложение получает пустой ответ — нет
+клиента, PID 0, пустой словарь — даже когда музыка играет, а публичной замены
+нет (`MPNowPlayingInfoCenter` возвращает только то, что туда положило само
+приложение).
 
-So `MediaAdapter/MediaRemoteAdapter.m` is built by an Xcode script phase into
-`Resources/MediaRemoteAdapter.dylib` and is **not** linked into the app. Instead the app
-spawns `/usr/bin/perl` — which is signed by Apple and still allowed — loads the dylib into
-it, reads line-delimited JSON from its stdout and writes player commands to its stdin.
+Поэтому `MediaAdapter/MediaRemoteAdapter.m` собирается отдельной фазой скрипта
+Xcode в `Resources/MediaRemoteAdapter.dylib` и **не** линкуется в приложение.
+Вместо этого приложение запускает `/usr/bin/perl` — он подписан Apple и всё
+ещё разрешён — загружает в него dylib, построчно читает JSON из его stdout и
+пишет команды плеера в его stdin.
 
-This is a deliberate workaround around a private framework. It may break on any macOS
-update; when the bridge fails to start, the Player section shows the reason instead of a
-track. Nothing else in the app depends on it.
+Это осознанный обход приватного фреймворка. Он может сломаться на любом
+обновлении macOS; если мост не запустился, раздел «Плеер» показывает причину
+вместо трека. Больше ничего в приложении от него не зависит.
 
-## Layout
+## Структура
 
 ```
-NotchDeck/Notch/     panel: window controller, shape, sections, per-section models and views
-MediaAdapter/        Objective-C bridge to MediaRemote, loaded by perl (see above)
-Docs/                NotchDeck.pdf and the program that generates it (Docs/source)
+NotchDeck/Notch/     панель: контроллер окна, форма, разделы, модели и вью каждого раздела
+MediaAdapter/        Objective-C мост к MediaRemote, загружается через perl (см. выше)
+Docs/                NotchDeck.pdf и программа, которая его генерирует (Docs/source)
 ```
 
-Panel geometry and colors live in `NotchConfig.swift`; the notch outline is in
+Геометрия и цвета панели — в `NotchConfig.swift`; контур чёлки — в
 `NotchShape.swift`.
 
-## License
+## Лицензия
 
-MIT — see [LICENSE](LICENSE).
+MIT — см. [LICENSE](LICENSE).
