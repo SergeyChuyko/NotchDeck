@@ -119,28 +119,152 @@ struct MockClipboard: View {
     }
 }
 
-struct MockTranslator: View {
-    var body: some View {
-        VStack(spacing: 6) {
-            HStack(spacing: 10) {
-                Text("Русский").frame(maxWidth: .infinity, alignment: .leading)
-                Image(systemName: "arrow.left.arrow.right").font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.secondary).frame(width: 28, height: 18)
-                    .background { Capsule().fill(sampleFill) }
-                Text("English").frame(maxWidth: .infinity, alignment: .trailing)
-            }
-            .font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
+/// Что выдвинуто под переводчиком — как NotchTranslator.Drawer в приложении.
+enum MockDrawer { case none, details, history }
 
-            HStack(alignment: .top, spacing: 10) {
-                sampleBlock(fills: true) { Text("Привет, как дела?").font(.system(size: 13)) }
-                sampleBlock(fills: true) { Text("Hello, how are you?").font(.system(size: 13)) }
-                    .overlay(alignment: .bottomTrailing) {
-                        Image(systemName: "doc.on.doc").font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.55)).frame(width: 20, height: 20)
-                            .background { Circle().fill(.white.opacity(0.10)) }.padding(5)
-                    }
+/// Переводчик: те же колонки через 34 pt, полоса кнопок снизу и выдвижная часть.
+/// Повторяет NotchTranslatorView — высоты из NotchConfig.
+struct MockTranslator: View {
+    var drawer: MockDrawer = .none
+
+    private let gap: CGFloat = 34
+    private let green = NotchConfig.englishGreen
+
+    var body: some View {
+        VStack(spacing: 0) {
+            VStack(spacing: 6) {
+                HStack(spacing: gap) {
+                    Text(drawer == .details ? "English" : "Русский").frame(maxWidth: .infinity, alignment: .leading)
+                    Text(drawer == .details ? "Русский" : "English").frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
+
+                HStack(alignment: .top, spacing: gap) {
+                    sampleBlock(fills: true) { source }
+                        .overlay(alignment: .bottomTrailing) { corner("xmark") }
+                    sampleBlock(fills: true) { Text(drawer == .details ? "бежать" : "Hello, how are you? Long time no see").font(.system(size: 13)) }
+                        .overlay(alignment: .bottomTrailing) { corner("doc.on.doc") }
+                }
+                .overlay {
+                    Image(systemName: "arrow.left.arrow.right").font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary).frame(width: 28, height: 18)
+                        .background { Capsule().fill(Color.white.opacity(0.10)) }
+                }
+
+                HStack(spacing: 0) {
+                    barButton("История", "clock.arrow.circlepath", open: drawer == .history)
+                    Spacer(minLength: 0)
+                    barButton("Варианты и примеры", "text.book.closed", open: drawer == .details)
+                }
+            }
+            .frame(height: NotchConfig.sectionListHeight)
+
+            if drawer != .none {
+                Group {
+                    if drawer == .details { details } else { history }
+                }
+                .padding(.top, 10)
+                .frame(height: NotchConfig.tallExtraHeight, alignment: .top)
             }
         }
+        .frame(maxHeight: .infinity, alignment: .top)
+    }
+
+    /// В обычном виде — с бледной подсказкой недописанного слова.
+    @ViewBuilder private var source: some View {
+        if drawer == .details {
+            Text("run").font(.system(size: 13))
+        } else {
+            Text("Привет, как дела? Давно не ви\(Text("делись").foregroundStyle(Color.white.opacity(0.3)))")
+                .font(.system(size: 13))
+        }
+    }
+
+    private func corner(_ name: String) -> some View {
+        Image(systemName: name).font(.system(size: 9, weight: .semibold))
+            .foregroundStyle(.white.opacity(0.55)).frame(width: 20, height: 20)
+            .background { Circle().fill(.white.opacity(0.10)) }.padding(5)
+    }
+
+    private func barButton(_ title: String, _ icon: String, open: Bool) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: icon).font(.system(size: 10, weight: .semibold))
+            Text(title).font(.system(size: 11, weight: .medium))
+            Image(systemName: open ? "chevron.up" : "chevron.down").font(.system(size: 8, weight: .bold)).opacity(0.7)
+        }
+        .foregroundStyle(open ? Color.white : Color.secondary)
+        .padding(.horizontal, 9).frame(height: 22)
+        .background { Capsule().fill(Color.white.opacity(open ? 0.16 : 0.07)) }
+    }
+
+    private func label(_ text: String) -> some View {
+        Text(text).font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
+    }
+
+    // Образцы взяты из тех же источников, что и в приложении: словарь Яндекса и Tatoeba.
+    private var details: some View {
+        HStack(alignment: .top, spacing: gap) {
+            VStack(alignment: .leading, spacing: 8) {
+                label("Варианты")
+                group("глагол", [("бежать", "flee, run away"), ("работать", "work"),
+                                 ("управлять", "manage"), ("запустить", "start, launch")])
+                group("существительное", [("бег", ""), ("запуск", "launch")])
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            VStack(alignment: .leading, spacing: 8) {
+                label("Примеры")
+                example("Why is he running away?", "Почему он убегает?")
+                example("His patience is running out.", "Его терпение на исходе.")
+                example("The buses run until midnight.", "Автобусы ходят до полуночи.")
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .font(.system(size: 12))
+    }
+
+    private func group(_ pos: String, _ variants: [(String, String)]) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(pos).font(.system(size: 10, weight: .medium)).foregroundStyle(Color.white.opacity(0.4))
+            ForEach(variants, id: \.0) { v in
+                Text("\(v.0)  \(Text(v.1).foregroundStyle(green.opacity(0.75)))")
+            }
+        }
+    }
+
+    private func example(_ en: String, _ ru: String) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(en).foregroundStyle(green)
+            Text(ru).foregroundStyle(.secondary)
+        }
+    }
+
+    private var history: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                label("Недавние")
+                Spacer()
+                Text("Очистить").font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
+            }
+            VStack(spacing: 2) {
+                row("Привет, как дела? Давно не виделись", "Hello, how are you? Long time no see", ru: true)
+                row("deadline", "крайний срок", ru: false)
+                row("Встреча переносится на четверг", "The meeting is postponed to Thursday", ru: true)
+                row("I'll get back to you", "Я вам отвечу", ru: false)
+                row("Спасибо за помощь", "Thanks for the help", ru: true)
+                row("to be honest", "честно говоря", ru: false)
+            }
+        }
+    }
+
+    private func row(_ source: String, _ target: String, ru: Bool) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: gap) {
+            Text(source).foregroundStyle(ru ? Color.white : green).frame(maxWidth: .infinity, alignment: .leading)
+            Text(target).foregroundStyle(ru ? green : Color.white).frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .font(.system(size: 12)).lineLimit(1)
+        .padding(.horizontal, 9).padding(.vertical, 5)
+        .background { RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.white.opacity(0.04)) }
     }
 }
 

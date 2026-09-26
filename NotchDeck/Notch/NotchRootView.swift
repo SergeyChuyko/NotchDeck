@@ -80,7 +80,7 @@ struct NotchRootView: View {
             topInset: notchSize.height,
             expandedSize: expandedSize
         )
-        .frame(width: expandedSize.width, height: expandedSize.height)
+        .frame(width: expandedSize.width, height: currentExpandedSize.height)
         .opacity(controller.isExpanded ? 1 : 0)
         .scaleEffect(controller.isExpanded ? 1 : 0.92, anchor: .top)
         .blur(radius: controller.isExpanded ? 0 : 6)
@@ -92,12 +92,18 @@ struct NotchRootView: View {
     // MARK: - Оформление
 
     private var panelSize: CGSize {
-        if controller.isExpanded { return expandedSize }
+        if controller.isExpanded { return currentExpandedSize }
 
         let collapsed = NotchConfig.collapsedSize(notchSize: notchSize, media: media.track != nil)
         return controller.isHinted
             ? NotchConfig.hintedSize(for: collapsed, notchSize: notchSize)
             : collapsed
+    }
+
+    private var currentExpandedSize: CGSize {
+        controller.isTall
+            ? CGSize(width: expandedSize.width, height: expandedSize.height + NotchConfig.tallExtraHeight)
+            : expandedSize
     }
 
     private var bottomRadius: CGFloat {

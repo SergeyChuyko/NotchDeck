@@ -120,10 +120,12 @@ func detail(for section: NotchSection) -> some View {
 // MARK: - Снимки разделов
 
 /// Панель на подложке — на белом фоне README чёрная плашка иначе сливается с краем.
-struct Still: View {
+struct Still<Detail: View>: View {
     let section: NotchSection
+    var size = expandedSize
+    @ViewBuilder let content: Detail
     var body: some View {
-        Panel(selected: section, size: expandedSize) { detail(for: section) }
+        Panel(selected: section, size: size) { content }
             .padding(.horizontal, 24)
             .padding(.bottom, 24)
             .background(Color(red: 0.10, green: 0.11, blue: 0.13))
@@ -222,8 +224,15 @@ MainActor.assumeIsolated {
     }
 
     for section in NotchSection.allCases {
-        guard let image = png(Still(section: section)) else { continue }
+        guard let image = png(Still(section: section) { detail(for: section) }) else { continue }
         write(image, to: "\(section.rawValue).png")
+    }
+
+    // Переводчик вытянутый вниз — с вариантами и с историей.
+    let tallSize = CGSize(width: expandedSize.width, height: expandedSize.height + NotchConfig.tallExtraHeight)
+    for (drawer, name) in [(MockDrawer.details, "translator-details"), (.history, "translator-history")] {
+        guard let image = png(Still(section: .translator, size: tallSize) { MockTranslator(drawer: drawer) }) else { continue }
+        write(image, to: "\(name).png")
     }
 
     // MARK: Кадры заставки

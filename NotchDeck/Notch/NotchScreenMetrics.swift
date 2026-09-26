@@ -53,4 +53,10 @@ struct NotchScreenMetrics: Equatable {
             height: NotchConfig.expandedHeight(notchHeight: notchSize.height).rounded()
         )
     }
+
+    /// Раскрытая плашка, вытянутая вниз под варианты перевода или историю.
+    func expandedSize(tall: Bool) -> CGSize {
+        guard tall else { return expandedSize }
+        return CGSize(width: expandedSize.width, height: expandedSize.height + NotchConfig.tallExtraHeight)
+    }
 }

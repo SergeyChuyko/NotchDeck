@@ -13,6 +13,9 @@ struct NotchTranslatorView: View {
     @FocusState private var isInputFocused: Bool
     @State private var justCopied = false
     @State private var isSwapHovered = false
+    @State private var drawer: NotchTranslator.Drawer?
+    @State private var hoveredBarButton: NotchTranslator.Drawer?
+    @State private var hoveredHistoryID: UUID?
 
     /// Один зазор и для шапки, и для колонок — иначе подписи не встают над своими
     /// колонками. Он же шире обычного не просто так: в нём стоит кнопка обмена,
@@ -20,17 +23,36 @@ struct NotchTranslatorView: View {
     private static let columnSpacing: CGFloat = 34
 
     var body: some View {
-        VStack(spacing: 6) {
-            header
+        VStack(spacing: 0) {
+            VStack(spacing: 6) {
+                header
 
-            HStack(alignment: .top, spacing: Self.columnSpacing) {
-                sourceColumn
-                targetColumn
+                HStack(alignment: .top, spacing: Self.columnSpacing) {
+                    sourceColumn
+                    targetColumn
+                }
+                // Кнопка обмена живёт в зазоре между колонками, по центру их высоты.
+                // В ряду подписей она была бы в трёх точках от правой и в двухстах от левой:
+                // подпись прижата к своей колонке, а зазор — почти у самого её края.
+                .overlay { swapButton }
+
+                bottomBar
             }
-            // Кнопка обмена живёт в зазоре между колонками, по центру их высоты.
-            // В ряду подписей она была бы в трёх точках от правой и в двухстах от левой:
-            // подпись прижата к своей колонке, а зазор — почти у самого её края.
-            .overlay { swapButton }
+            // Верхняя часть всегда ровно в обычную высоту плашки: вытягивание добавляет
+            // место снизу, и кнопки под колонками не уезжают из-под курсора.
+            .frame(height: NotchConfig.sectionListHeight)
+
+            if controller.isTall, let drawer {
+                drawerContent(drawer)
+                    .padding(.top, 10)
+                    .frame(height: NotchConfig.tallExtraHeight)
+                    .transition(.opacity)
+            }
+        }
+        .frame(maxHeight: .infinity, alignment: .top)
+        .onChange(of: controller.isTall) { _, tall in
+            // Плашку втянули снаружи — закрытием или сменой раздела.
+            if !tall { closeDrawer() }
         }
         .translationTask(translator.configuration) { session in
             await translator.perform(with: session)
@@ -42,6 +64,7 @@ struct NotchTranslatorView: View {
         }
         .onDisappear {
             controller.setInteractionLocked(false)
+            translator.stopDetails()
         }
     }
 
@@ -94,7 +117,12 @@ struct NotchTranslatorView: View {
                         .font(.system(size: 13))
                         .foregroundStyle(Color.primary.opacity(0.28))
                         .allowsHitTesting(false)
+                } else if !translator.completion.isEmpty {
+                    completionGhost
                 }
+            }
+            .onKeyPress(.tab) {
+                translator.acceptCompletion() ? .handled : .ignored
             }
             .onChange(of: translator.input) { _, _ in
                 translator.inputChanged()
@@ -117,6 +145,20 @@ struct NotchTranslatorView: View {
                     clearButton.padding(5)
                 }
             }
+    }
+
+    /// Подсказка рисуется поверх поля: весь набранный текст прозрачным, чтобы переносы
+    /// строк легли так же, как в поле, а за ним — бледный хвост слова.
+    private var completionGhost: some View {
+        var typed = AttributedString(translator.input)
+        typed.foregroundColor = .clear
+        var tail = AttributedString(translator.completion)
+        tail.foregroundColor = Color.primary.opacity(0.3)
+
+        return Text(typed + tail)
+            .font(.system(size: 13))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .allowsHitTesting(false)
     }
 
     private var clearButton: some View {
@@ -191,6 +233,7 @@ struct NotchTranslatorView: View {
     }
 
     private func copyResult() {
+        translator.recordCurrent()
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(translator.output, forType: .string)
 
@@ -198,6 +241,257 @@ struct NotchTranslatorView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
             withAnimation(.easeInOut(duration: 0.15)) { justCopied = false }
         }
+    }
+}
+
+// MARK: - Нижняя полоса и выдвижная часть
+
+private extension NotchTranslatorView {
+
+    /// История слева, варианты справа — под той колонкой, к которой они относятся:
+    /// история — про то, что человек вводил, варианты — про перевод.
+    var bottomBar: some View {
+        HStack(spacing: 0) {
+            barButton(.history, title: "История", systemName: "clock.arrow.circlepath")
+            Spacer(minLength: 0)
+            barButton(.details, title: "Варианты и примеры", systemName: "text.book.closed")
+        }
+    }
+
+    func barButton(_ kind: NotchTranslator.Drawer, title: String, systemName: String) -> some View {
+        let isOpen = controller.isTall && drawer == kind
+        let isHovered = hoveredBarButton == kind
+
+        return HStack(spacing: 5) {
+            Image(systemName: systemName)
+                .font(.system(size: 10, weight: .semibold))
+            Text(title)
+                .font(.system(size: 11, weight: .medium))
+            // Шеврон говорит, куда поедет плашка: вниз — раскроется, вверх — свернётся.
+            Image(systemName: isOpen ? "chevron.up" : "chevron.down")
+                .font(.system(size: 8, weight: .bold))
+                .opacity(0.7)
+        }
+        .foregroundStyle(isOpen ? Color.primary : Color.secondary)
+        .padding(.horizontal, 9)
+        .frame(height: 22)
+        .background {
+            Capsule().fill(Color.primary.opacity(isOpen ? 0.16 : (isHovered ? 0.12 : 0.07)))
+        }
+        .contentShape(Capsule())
+        .onHover { hovering in
+            hoveredBarButton = hovering ? kind : (hoveredBarButton == kind ? nil : hoveredBarButton)
+        }
+        .onTapGesture { toggleDrawer(kind) }
+    }
+
+    /// Та же кнопка сворачивает; соседняя — переключает содержимое, не втягивая плашку.
+    func toggleDrawer(_ kind: NotchTranslator.Drawer) {
+        if controller.isTall && drawer == kind {
+            controller.setTall(false)
+            closeDrawer()
+            return
+        }
+
+        drawer = kind
+        if kind == .details {
+            translator.loadDetails()
+        } else {
+            translator.stopDetails()
+        }
+        controller.setTall(true)
+    }
+
+    func closeDrawer() {
+        drawer = nil
+        translator.stopDetails()
+    }
+
+    @ViewBuilder
+    func drawerContent(_ drawer: NotchTranslator.Drawer) -> some View {
+        switch drawer {
+        case .details: detailsContent
+        case .history: historyContent
+        }
+    }
+
+    // MARK: Варианты и примеры
+
+    @ViewBuilder
+    var detailsContent: some View {
+        switch translator.details {
+        case .idle:
+            drawerMessage("Введите слово — здесь появятся другие варианты и примеры")
+        case .loading:
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("Ищу варианты…")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        case .failed:
+            drawerMessage("Не удалось загрузить варианты — нужна сеть")
+        case .loaded(let details) where details.isEmpty:
+            drawerMessage("Других вариантов нет — словарь знает слова и короткие фразы")
+        case .loaded(let details):
+            // Те же две колонки, что и сверху: варианты под переводом у них общий язык,
+            // но слева им было бы тесно рядом с примерами, а справа — пусто.
+            HStack(alignment: .top, spacing: Self.columnSpacing) {
+                ScrollView {
+                    variantsList(details.groups)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                ScrollView {
+                    examplesList(details.examples)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .scrollIndicators(.never)
+        }
+    }
+
+    func variantsList(_ groups: [NotchTranslatorDictionary.Group]) -> some View {
+        let targetIsEnglish = translator.direction == .ruToEn
+
+        return VStack(alignment: .leading, spacing: 8) {
+            drawerSectionTitle("Варианты")
+            if groups.isEmpty {
+                drawerNote("Нет в словаре")
+            }
+            ForEach(groups) { group in
+                VStack(alignment: .leading, spacing: 3) {
+                    if !group.partOfSpeech.isEmpty {
+                        Text(group.partOfSpeech)
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(Color.primary.opacity(0.4))
+                    }
+                    ForEach(group.variants) { variant in
+                        variantRow(variant, targetIsEnglish: targetIsEnglish)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Вариант и то, как он переводится обратно: по обратному переводу и видно,
+    /// чем «бежать» отличается от «удирать».
+    func variantRow(_ variant: NotchTranslatorDictionary.Variant, targetIsEnglish: Bool) -> some View {
+        var line = AttributedString(variant.text)
+        line.foregroundColor = targetIsEnglish ? NotchConfig.englishGreen : Color.primary
+        if !variant.meanings.isEmpty {
+            var meanings = AttributedString("  " + variant.meanings.joined(separator: ", "))
+            meanings.foregroundColor = targetIsEnglish ? Color.secondary : NotchConfig.englishGreen.opacity(0.75)
+            line += meanings
+        }
+        return Text(line)
+            .font(.system(size: 12))
+            .textSelection(.enabled)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    func examplesList(_ examples: [NotchTranslatorDictionary.Example]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            drawerSectionTitle("Примеры")
+            if examples.isEmpty {
+                drawerNote("Примеров не нашлось")
+            }
+            ForEach(examples) { example in
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(example.english)
+                        .foregroundStyle(NotchConfig.englishGreen)
+                    Text(example.russian)
+                        .foregroundStyle(.secondary)
+                }
+                .font(.system(size: 12))
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    // MARK: История
+
+    @ViewBuilder
+    var historyContent: some View {
+        if translator.history.isEmpty {
+            drawerMessage("История пуста — сюда попадут ваши переводы")
+        } else {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    drawerSectionTitle("Недавние")
+                    Spacer()
+                    Text("Очистить")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .contentShape(Rectangle())
+                        .onTapGesture { translator.clearHistory() }
+                }
+
+                ScrollView {
+                    LazyVStack(spacing: 2) {
+                        ForEach(translator.history) { entry in
+                            historyRow(entry)
+                        }
+                    }
+                }
+                .scrollIndicators(.never)
+            }
+        }
+    }
+
+    /// Строка истории разложена по тем же колонкам, что и поля сверху: оригинал под
+    /// оригиналом, перевод под переводом. Английский — зелёным, с какой бы стороны он ни был.
+    func historyRow(_ entry: NotchTranslator.HistoryEntry) -> some View {
+        let isHovered = hoveredHistoryID == entry.id
+
+        return HStack(alignment: .firstTextBaseline, spacing: Self.columnSpacing) {
+            Text(entry.source)
+                .foregroundStyle(entry.sourceIsRussian ? Color.primary : NotchConfig.englishGreen)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Text(entry.target)
+                .foregroundStyle(entry.sourceIsRussian ? NotchConfig.englishGreen : Color.primary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .font(.system(size: 12))
+        .lineLimit(2)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 5)
+        .background {
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(Color.primary.opacity(isHovered ? 0.10 : 0.04))
+        }
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            hoveredHistoryID = hovering ? entry.id : (hoveredHistoryID == entry.id ? nil : hoveredHistoryID)
+        }
+        .onTapGesture { translator.restore(entry) }
+        .contextMenu {
+            Button("Удалить из истории") { translator.removeFromHistory(entry) }
+        }
+        .help("Вернуть в переводчик")
+    }
+
+    // MARK: Общее
+
+    func drawerSectionTitle(_ title: String) -> some View {
+        Text(title)
+            .font(.system(size: 10, weight: .medium))
+            .foregroundStyle(.secondary)
+    }
+
+    func drawerNote(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 12))
+            .foregroundStyle(Color.primary.opacity(0.28))
+    }
+
+    func drawerMessage(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 12))
+            .foregroundStyle(Color.primary.opacity(0.35))
+            .multilineTextAlignment(.center)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 

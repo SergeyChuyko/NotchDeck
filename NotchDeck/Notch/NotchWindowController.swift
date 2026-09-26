@@ -60,6 +60,7 @@ final class NotchWindowController {
     private var hostingView: PassthroughHostingView<NotchRootView>?
     private var metrics: NotchScreenMetrics?
     private var collapseWorkItem: DispatchWorkItem?
+    private var tallShrinkWorkItem: DispatchWorkItem?
     private var playbackObservers: Set<AnyCancellable> = []
 
     // MARK: - Жизненный цикл
@@ -157,7 +158,8 @@ final class NotchWindowController {
         self.metrics = metrics
         hostingView?.rootView = makeRootView(metrics: metrics)
         if controller.isExpanded {
-            applyWindowSize(expandedWindowSize(), panelSize: metrics.expandedSize)
+            applyWindowSize(expandedWindowSize(tall: controller.isTall),
+                            panelSize: metrics.expandedSize(tall: controller.isTall))
         } else {
             applyWindowSize(collapsedWindowSize(for: metrics),
                             panelSize: collapsedPanelSize(for: metrics, hinted: controller.isHinted,
@@ -183,11 +185,24 @@ final class NotchWindowController {
             // тот самый рекурсивный Layout pass, на котором приложение падало.
             DispatchQueue.main.async {
                 guard let metrics = self.metrics else { return }
-                self.applyWindowSize(self.expandedWindowSize(), panelSize: metrics.expandedSize)
+                self.applyWindowSize(self.expandedWindowSize(tall: false), panelSize: metrics.expandedSize)
             }
         }
         controller.didCollapse = { [weak self] in
+            self?.tallShrinkWorkItem?.cancel()
             self?.scheduleWindowShrink()
+        }
+        controller.willGrowTall = { [weak self] in
+            guard let self else { return }
+            self.tallShrinkWorkItem?.cancel()
+            DispatchQueue.main.async {
+                guard let metrics = self.metrics, self.controller.isExpanded else { return }
+                self.applyWindowSize(self.expandedWindowSize(tall: true),
+                                     panelSize: metrics.expandedSize(tall: true))
+            }
+        }
+        controller.didShrinkTall = { [weak self] in
+            self?.scheduleTallShrink()
         }
         // Размер окна при этом не трогаем — оно и так с запасом под подросшую чёлку.
         // Меняется только зона, которой окно ловит мышь.
@@ -212,6 +227,18 @@ final class NotchWindowController {
         }
         collapseWorkItem = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.55, execute: work)
+    }
+
+    /// Вернуть окно к обычной раскрытой высоте, когда плашка доиграет втягивание.
+    private func scheduleTallShrink() {
+        tallShrinkWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, let metrics = self.metrics,
+                  self.controller.isExpanded, !self.controller.isTall else { return }
+            self.applyWindowSize(self.expandedWindowSize(tall: false), panelSize: metrics.expandedSize)
+        }
+        tallShrinkWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45, execute: work)
     }
 
     // MARK: - Геометрия окна
@@ -240,11 +267,12 @@ final class NotchWindowController {
         )
     }
 
-    private func expandedWindowSize() -> CGSize {
+    private func expandedWindowSize(tall: Bool) -> CGSize {
         guard let metrics else { return .zero }
+        let panel = metrics.expandedSize(tall: tall)
         return CGSize(
-            width: metrics.expandedSize.width + NotchConfig.windowSidePadding * 2,
-            height: metrics.expandedSize.height + NotchConfig.windowBottomPadding
+            width: panel.width + NotchConfig.windowSidePadding * 2,
+            height: panel.height + NotchConfig.windowBottomPadding
         )
     }
 

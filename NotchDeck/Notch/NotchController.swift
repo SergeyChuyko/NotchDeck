@@ -13,7 +13,19 @@ final class NotchController: ObservableObject {
 
     /// Выбранный раздел живёт здесь, а не в @State вьюхи: так он переживает
     /// и сворачивание плашки, и пересоздание вьюхи при смене монитора.
-    @Published var selectedSection: NotchSection = .player
+    @Published var selectedSection: NotchSection = .player {
+        // Вытянутой бывает только плашка переводчика: у остальных разделов под их
+        // содержимым была бы пустая полоса.
+        didSet { if selectedSection != oldValue { setTall(false) } }
+    }
+
+    /// Раскрытая плашка вытянута вниз — под варианты перевода или историю.
+    @Published private(set) var isTall = false
+
+    /// Окно под вытянутую плашку должно вырасти до анимации, а ужаться — после неё.
+    /// Правила те же, что у willExpand и didCollapse, и по тем же причинам.
+    var willGrowTall: (() -> Void)?
+    var didShrinkTall: (() -> Void)?
 
     /// Окну нужно вырасти до начала анимации, иначе развернуться будет некуда.
     /// Вызывается строго вне анимационной транзакции: менять размер окна во время
@@ -155,7 +167,27 @@ final class NotchController: ObservableObject {
             isExpanded = false
             // Закрыли кликом — курсор остался лежать на чёлке, но подрастать ей уже незачем.
             isHinted = false
+            // Следующее раскрытие начинается с обычной высоты. Окно ужмёт didCollapse.
+            isTall = false
         }
         didCollapse?()
+    }
+
+    /// Вытянуть раскрытую плашку вниз или вернуть обычную высоту.
+    func setTall(_ tall: Bool) {
+        guard isTall != tall else { return }
+
+        if tall {
+            guard isExpanded else { return }
+            willGrowTall?()
+            // Как и при раскрытии: окно вырастает в очереди первым, анимация идёт следом.
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.isExpanded, !self.isTall else { return }
+                withAnimation(NotchConfig.tallAnimation) { self.isTall = true }
+            }
+        } else {
+            withAnimation(NotchConfig.tallAnimation) { isTall = false }
+            didShrinkTall?()
+        }
     }
 }
