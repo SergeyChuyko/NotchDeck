@@ -230,7 +230,8 @@ MainActor.assumeIsolated {
 
     // Переводчик вытянутый вниз — с вариантами и с историей.
     let tallSize = CGSize(width: expandedSize.width, height: expandedSize.height + NotchConfig.tallExtraHeight)
-    for (drawer, name) in [(MockDrawer.details, "translator-details"), (.history, "translator-history")] {
+    for (drawer, name) in [(MockDrawer.details, "translator-details"), (.history, "translator-history"),
+                           (.favorites, "translator-favorites")] {
         guard let image = png(Still(section: .translator, size: tallSize) { MockTranslator(drawer: drawer) }) else { continue }
         write(image, to: "\(name).png")
     }

@@ -16,6 +16,7 @@ struct NotchTranslatorView: View {
     @State private var drawer: NotchTranslator.Drawer?
     @State private var hoveredBarButton: NotchTranslator.Drawer?
     @State private var hoveredHistoryID: UUID?
+    @State private var isStarHovered = false
 
     /// Один зазор и для шапки, и для колонок — иначе подписи не встают над своими
     /// колонками. Он же шире обычного не просто так: в нём стоит кнопка обмена,
@@ -178,6 +179,33 @@ struct NotchTranslatorView: View {
                     copyButton.padding(5)
                 }
             }
+            .overlay(alignment: .topTrailing) {
+                if translator.canFavoriteCurrent || translator.isCurrentFavorite {
+                    starButton.padding(4)
+                }
+            }
+    }
+
+    /// Звёздочка крупнее угловых кругляшей — в полтора раза, чтобы попадать не целясь.
+    /// Контур, пока перевод не сохранён; залитая — когда он в избранном.
+    private var starButton: some View {
+        let isOn = translator.isCurrentFavorite
+
+        return Image(systemName: isOn ? "star.fill" : "star")
+            .font(.system(size: 15, weight: .semibold))
+            .foregroundStyle(NotchConfig.favoriteYellow)
+            .contentTransition(.symbolEffect(.replace))
+            .symbolEffect(.bounce, value: isOn)
+            .frame(width: 30, height: 30)
+            .background { Circle().fill(Color.primary.opacity(isStarHovered ? 0.12 : 0)) }
+            .contentShape(Circle())
+            .onHover { isStarHovered = $0 }
+            .onTapGesture {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
+                    translator.toggleFavoriteCurrent()
+                }
+            }
+            .help(isOn ? "Убрать из избранного" : "В избранное")
     }
 
     // MARK: - Перевод
@@ -207,6 +235,8 @@ struct NotchTranslatorView: View {
                 Text(translator.output)
                     .font(.system(size: 13))
                     .textSelection(.enabled)
+                    // Справа сверху звёздочка — текст под неё не заезжает.
+                    .padding(.trailing, 22)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     // Место под кнопку копирования, чтобы текст под неё не заезжал.
                     .padding(.bottom, 18)
@@ -253,6 +283,8 @@ private extension NotchTranslatorView {
     var bottomBar: some View {
         HStack(spacing: 0) {
             barButton(.history, title: "История", systemName: "clock.arrow.circlepath")
+            barButton(.favorites, title: "Избранное", systemName: "star")
+                .padding(.leading, 6)
             Spacer(minLength: 0)
             barButton(.details, title: "Варианты и примеры", systemName: "text.book.closed")
         }
@@ -263,8 +295,11 @@ private extension NotchTranslatorView {
         let isHovered = hoveredBarButton == kind
 
         return HStack(spacing: 5) {
-            Image(systemName: systemName)
+            // У избранного значок своего цвета — того же, что у звёздочки над переводом,
+            // чтобы связь между ними читалась сразу.
+            Image(systemName: kind == .favorites && isOpen ? "star.fill" : systemName)
                 .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(kind == .favorites ? NotchConfig.favoriteYellow : (isOpen ? Color.primary : Color.secondary))
             Text(title)
                 .font(.system(size: 11, weight: .medium))
             // Шеврон говорит, куда поедет плашка: вниз — раскроется, вверх — свернётся.
@@ -312,6 +347,7 @@ private extension NotchTranslatorView {
         switch drawer {
         case .details: detailsContent
         case .history: historyContent
+        case .favorites: favoritesContent
         }
     }
 
@@ -431,7 +467,35 @@ private extension NotchTranslatorView {
                 ScrollView {
                     LazyVStack(spacing: 2) {
                         ForEach(translator.history) { entry in
-                            historyRow(entry)
+                            historyRow(entry, englishColor: NotchConfig.englishGreen) {
+                                translator.removeFromHistory(entry)
+                            }
+                        }
+                    }
+                }
+                .scrollIndicators(.never)
+            }
+        }
+    }
+
+    // MARK: Избранное
+
+    /// Тот же список, что история, только английский — цветом звёздочки:
+    /// по цвету сразу видно, в каком из двух списков ты сейчас.
+    @ViewBuilder
+    var favoritesContent: some View {
+        if translator.favorites.isEmpty {
+            drawerMessage("Избранное пусто — отметьте перевод звёздочкой")
+        } else {
+            VStack(alignment: .leading, spacing: 4) {
+                drawerSectionTitle("Сохранённые")
+
+                ScrollView {
+                    LazyVStack(spacing: 2) {
+                        ForEach(translator.favorites) { entry in
+                            historyRow(entry, englishColor: NotchConfig.favoriteYellow) {
+                                translator.removeFromFavorites(entry)
+                            }
                         }
                     }
                 }
@@ -442,15 +506,16 @@ private extension NotchTranslatorView {
 
     /// Строка истории разложена по тем же колонкам, что и поля сверху: оригинал под
     /// оригиналом, перевод под переводом. Английский — зелёным, с какой бы стороны он ни был.
-    func historyRow(_ entry: NotchTranslator.HistoryEntry) -> some View {
+    func historyRow(_ entry: NotchTranslator.HistoryEntry, englishColor: Color,
+                    remove: @escaping () -> Void) -> some View {
         let isHovered = hoveredHistoryID == entry.id
 
         return HStack(alignment: .firstTextBaseline, spacing: Self.columnSpacing) {
             Text(entry.source)
-                .foregroundStyle(entry.sourceIsRussian ? Color.primary : NotchConfig.englishGreen)
+                .foregroundStyle(entry.sourceIsRussian ? Color.primary : englishColor)
                 .frame(maxWidth: .infinity, alignment: .leading)
             Text(entry.target)
-                .foregroundStyle(entry.sourceIsRussian ? NotchConfig.englishGreen : Color.primary)
+                .foregroundStyle(entry.sourceIsRussian ? englishColor : Color.primary)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .font(.system(size: 12))
@@ -467,7 +532,7 @@ private extension NotchTranslatorView {
         }
         .onTapGesture { translator.restore(entry) }
         .contextMenu {
-            Button("Удалить из истории") { translator.removeFromHistory(entry) }
+            Button("Удалить") { remove() }
         }
         .help("Вернуть в переводчик")
     }

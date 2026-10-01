@@ -43,6 +43,7 @@ final class NotchTranslator: ObservableObject {
     enum Drawer {
         case details
         case history
+        case favorites
     }
 
     enum DetailsState: Equatable {
@@ -63,6 +64,8 @@ final class NotchTranslator: ObservableObject {
     @Published private(set) var completion: String = ""
 
     @Published private(set) var history: [HistoryEntry] = []
+    /// Избранное — то, что человек сохранил звёздочкой. В отличие от истории не вытесняется.
+    @Published private(set) var favorites: [HistoryEntry] = []
     @Published private(set) var details: DetailsState = .idle
 
     /// Для какой пары уже загружены варианты — чтобы не спрашивать сеть заново
@@ -75,6 +78,7 @@ final class NotchTranslator: ObservableObject {
     private var historyTask: Task<Void, Never>?
 
     private static let historyKey = "translatorHistory"
+    private static let favoritesKey = "translatorFavorites"
     private static let historyLimit = 50
 
     /// Меняя её, мы просим `.translationTask` начать новый перевод.
@@ -88,6 +92,7 @@ final class NotchTranslator: ObservableObject {
 
     init() {
         loadHistory()
+        favorites = Self.loadEntries(forKey: Self.favoritesKey)
     }
 
     // MARK: - Ввод
@@ -96,6 +101,7 @@ final class NotchTranslator: ObservableObject {
     func inputChanged() {
         debounceTask?.cancel()
         historyTask?.cancel()
+        detectDirection()
         updateCompletion()
 
         guard !trimmedInput.isEmpty else {
@@ -165,9 +171,36 @@ final class NotchTranslator: ObservableObject {
         return true
     }
 
+    /// Направление следует за тем, на каком языке человек пишет: набрал кириллицей —
+    /// значит с русского, латиницей — с английского. Выбирать руками не нужно.
+    ///
+    /// Решает большинство букв, а не первая: «Привет, John» — всё ещё русский текст.
+    private func detectDirection() {
+        var cyrillic = 0
+        var latin = 0
+        for scalar in input.unicodeScalars {
+            switch scalar.value {
+            case 0x0400...0x04FF: cyrillic += 1
+            case 0x41...0x5A, 0x61...0x7A: latin += 1
+            default: break
+            }
+        }
+        guard cyrillic != latin else { return }
+
+        let detected: Direction = cyrillic > latin ? .ruToEn : .enToRu
+        guard detected != direction else { return }
+        direction = detected
+        // Прежний перевод был в другую сторону и к новому тексту уже не относится.
+        output = ""
+    }
+
+    /// Как в обычных переводчиках: перевод уходит в левое поле, и переводится обратно.
     func toggleDirection() {
         direction = direction.reversed
-        // Перевод в обратную сторону — уже другая пара языков, старый результат не годится.
+        if !output.isEmpty {
+            input = output
+            completion = ""
+        }
         output = ""
         requestTranslation()
     }
@@ -292,14 +325,64 @@ extension NotchTranslator {
     }
 
     private func loadHistory() {
-        guard let data = UserDefaults.standard.data(forKey: Self.historyKey),
-              let entries = try? JSONDecoder().decode([HistoryEntry].self, from: data) else { return }
-        history = entries
+        history = Self.loadEntries(forKey: Self.historyKey)
     }
 
     private func saveHistory() {
-        guard let data = try? JSONEncoder().encode(history) else { return }
-        UserDefaults.standard.set(data, forKey: Self.historyKey)
+        Self.saveEntries(history, forKey: Self.historyKey)
+    }
+
+    fileprivate static func loadEntries(forKey key: String) -> [HistoryEntry] {
+        guard let data = UserDefaults.standard.data(forKey: key),
+              let entries = try? JSONDecoder().decode([HistoryEntry].self, from: data) else { return [] }
+        return entries
+    }
+
+    fileprivate static func saveEntries(_ entries: [HistoryEntry], forKey key: String) {
+        guard let data = try? JSONEncoder().encode(entries) else { return }
+        UserDefaults.standard.set(data, forKey: key)
+    }
+}
+
+// MARK: - Избранное
+
+extension NotchTranslator {
+
+    /// Текущий перевод уже в избранном? Сравниваем по тексту и направлению, без регистра:
+    /// «Hello» и «hello» — одна и та же запись.
+    var isCurrentFavorite: Bool {
+        currentFavoriteIndex != nil
+    }
+
+    var canFavoriteCurrent: Bool {
+        !trimmedInput.isEmpty && !output.isEmpty && errorText == nil && !isTranslating
+    }
+
+    private var currentFavoriteIndex: Int? {
+        let text = trimmedInput
+        let isRussian = direction == .ruToEn
+        return favorites.firstIndex {
+            $0.sourceIsRussian == isRussian && $0.source.caseInsensitiveCompare(text) == .orderedSame
+        }
+    }
+
+    /// Звёздочка: добавить текущий перевод в избранное или убрать оттуда.
+    func toggleFavoriteCurrent() {
+        if let index = currentFavoriteIndex {
+            favorites.remove(at: index)
+        } else {
+            guard canFavoriteCurrent else { return }
+            favorites.insert(HistoryEntry(source: trimmedInput, target: output,
+                                          sourceIsRussian: direction == .ruToEn), at: 0)
+            // Отмеченное звёздочкой — тем более законченный перевод.
+            recordCurrent()
+        }
+        Self.saveEntries(favorites, forKey: Self.favoritesKey)
+    }
+
+    func removeFromFavorites(_ entry: HistoryEntry) {
+        favorites.removeAll { $0.id == entry.id }
+        Self.saveEntries(favorites, forKey: Self.favoritesKey)
     }
 }
 

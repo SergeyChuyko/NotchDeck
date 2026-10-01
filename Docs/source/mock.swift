@@ -120,7 +120,7 @@ struct MockClipboard: View {
 }
 
 /// Что выдвинуто под переводчиком — как NotchTranslator.Drawer в приложении.
-enum MockDrawer { case none, details, history }
+enum MockDrawer { case none, details, history, favorites }
 
 /// Переводчик: те же колонки через 34 pt, полоса кнопок снизу и выдвижная часть.
 /// Повторяет NotchTranslatorView — высоты из NotchConfig.
@@ -144,6 +144,7 @@ struct MockTranslator: View {
                         .overlay(alignment: .bottomTrailing) { corner("xmark") }
                     sampleBlock(fills: true) { Text(drawer == .details ? "бежать" : "Hello, how are you? Long time no see").font(.system(size: 13)) }
                         .overlay(alignment: .bottomTrailing) { corner("doc.on.doc") }
+                        .overlay(alignment: .topTrailing) { star }
                 }
                 .overlay {
                     Image(systemName: "arrow.left.arrow.right").font(.system(size: 10, weight: .semibold))
@@ -153,6 +154,9 @@ struct MockTranslator: View {
 
                 HStack(spacing: 0) {
                     barButton("История", "clock.arrow.circlepath", open: drawer == .history)
+                    barButton("Избранное", drawer == .favorites ? "star.fill" : "star", open: drawer == .favorites,
+                              iconColor: NotchConfig.favoriteYellow)
+                        .padding(.leading, 6)
                     Spacer(minLength: 0)
                     barButton("Варианты и примеры", "text.book.closed", open: drawer == .details)
                 }
@@ -161,7 +165,11 @@ struct MockTranslator: View {
 
             if drawer != .none {
                 Group {
-                    if drawer == .details { details } else { history }
+                    switch drawer {
+                    case .details: details
+                    case .favorites: favorites
+                    default: history
+                    }
                 }
                 .padding(.top, 10)
                 .frame(height: NotchConfig.tallExtraHeight, alignment: .top)
@@ -186,9 +194,18 @@ struct MockTranslator: View {
             .background { Circle().fill(.white.opacity(0.10)) }.padding(5)
     }
 
-    private func barButton(_ title: String, _ icon: String, open: Bool) -> some View {
+    /// Залитая: на снимках перевод уже сохранён — так видно, как звёздочка выглядит отмеченной.
+    private var star: some View {
+        Image(systemName: drawer == .details ? "star" : "star.fill")
+            .font(.system(size: 15, weight: .semibold))
+            .foregroundStyle(NotchConfig.favoriteYellow)
+            .frame(width: 30, height: 30).padding(4)
+    }
+
+    private func barButton(_ title: String, _ icon: String, open: Bool, iconColor: Color? = nil) -> some View {
         HStack(spacing: 5) {
             Image(systemName: icon).font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(iconColor ?? (open ? Color.white : Color.secondary))
             Text(title).font(.system(size: 11, weight: .medium))
             Image(systemName: open ? "chevron.up" : "chevron.down").font(.system(size: 8, weight: .bold)).opacity(0.7)
         }
@@ -247,7 +264,7 @@ struct MockTranslator: View {
                 Text("Очистить").font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
             }
             VStack(spacing: 2) {
-                row("Привет, как дела? Давно не виделись", "Hello, how are you? Long time no see", ru: true)
+                row("Привет, как дела? Давно не виделись", "Hello, how are you? Long time no see", ru: true, english: green)
                 row("deadline", "крайний срок", ru: false)
                 row("Встреча переносится на четверг", "The meeting is postponed to Thursday", ru: true)
                 row("I'll get back to you", "Я вам отвечу", ru: false)
@@ -257,10 +274,26 @@ struct MockTranslator: View {
         }
     }
 
-    private func row(_ source: String, _ target: String, ru: Bool) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: gap) {
-            Text(source).foregroundStyle(ru ? Color.white : green).frame(maxWidth: .infinity, alignment: .leading)
-            Text(target).foregroundStyle(ru ? green : Color.white).frame(maxWidth: .infinity, alignment: .leading)
+    private var favorites: some View {
+        let yellow = NotchConfig.favoriteYellow
+        return VStack(alignment: .leading, spacing: 4) {
+            label("Сохранённые")
+            VStack(spacing: 2) {
+                row("Привет, как дела? Давно не виделись", "Hello, how are you? Long time no see", ru: true, english: yellow)
+                row("It's not my cup of tea", "Это не моё", ru: false, english: yellow)
+                row("Не откладывай на завтра", "Don't put it off until tomorrow", ru: true, english: yellow)
+                row("to be on the same page", "быть на одной волне", ru: false, english: yellow)
+                row("отличная идея", "a great idea", ru: true, english: yellow)
+                row("serendipity", "счастливая случайность", ru: false, english: yellow)
+            }
+        }
+    }
+
+    private func row(_ source: String, _ target: String, ru: Bool, english: Color? = nil) -> some View {
+        let english = english ?? green
+        return HStack(alignment: .firstTextBaseline, spacing: gap) {
+            Text(source).foregroundStyle(ru ? Color.white : english).frame(maxWidth: .infinity, alignment: .leading)
+            Text(target).foregroundStyle(ru ? english : Color.white).frame(maxWidth: .infinity, alignment: .leading)
         }
         .font(.system(size: 12)).lineLimit(1)
         .padding(.horizontal, 9).padding(.vertical, 5)
