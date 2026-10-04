@@ -14,7 +14,6 @@ struct NotchTranslatorView: View {
     @State private var justCopied = false
     @State private var isSwapHovered = false
     @State private var drawer: NotchTranslator.Drawer?
-    @State private var hoveredBarButton: NotchTranslator.Drawer?
     @State private var hoveredHistoryID: UUID?
     @State private var isStarHovered = false
 
@@ -292,32 +291,16 @@ private extension NotchTranslatorView {
 
     func barButton(_ kind: NotchTranslator.Drawer, title: String, systemName: String) -> some View {
         let isOpen = controller.isTall && drawer == kind
-        let isHovered = hoveredBarButton == kind
+        // У избранного значок своего цвета — того же, что у звёздочки над переводом,
+        // чтобы связь между ними читалась сразу.
+        let isFavorites = kind == .favorites
 
-        return HStack(spacing: 5) {
-            // У избранного значок своего цвета — того же, что у звёздочки над переводом,
-            // чтобы связь между ними читалась сразу.
-            Image(systemName: kind == .favorites && isOpen ? "star.fill" : systemName)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(kind == .favorites ? NotchConfig.favoriteYellow : (isOpen ? Color.primary : Color.secondary))
-            Text(title)
-                .font(.system(size: 11, weight: .medium))
-            // Шеврон говорит, куда поедет плашка: вниз — раскроется, вверх — свернётся.
-            Image(systemName: isOpen ? "chevron.up" : "chevron.down")
-                .font(.system(size: 8, weight: .bold))
-                .opacity(0.7)
+        return NotchDrawerButton(title: title,
+                                 systemName: isFavorites && isOpen ? "star.fill" : systemName,
+                                 isOpen: isOpen,
+                                 iconColor: isFavorites ? NotchConfig.favoriteYellow : nil) {
+            toggleDrawer(kind)
         }
-        .foregroundStyle(isOpen ? Color.primary : Color.secondary)
-        .padding(.horizontal, 9)
-        .frame(height: 22)
-        .background {
-            Capsule().fill(Color.primary.opacity(isOpen ? 0.16 : (isHovered ? 0.12 : 0.07)))
-        }
-        .contentShape(Capsule())
-        .onHover { hovering in
-            hoveredBarButton = hovering ? kind : (hoveredBarButton == kind ? nil : hoveredBarButton)
-        }
-        .onTapGesture { toggleDrawer(kind) }
     }
 
     /// Та же кнопка сворачивает; соседняя — переключает содержимое, не втягивая плашку.

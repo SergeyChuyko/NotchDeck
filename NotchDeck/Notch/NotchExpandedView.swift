@@ -226,7 +226,7 @@ struct NotchExpandedView: View {
             case .translator:
                 NotchTranslatorView(translator: translator, controller: controller)
             case .clipboard:
-                NotchClipboardView(clipboard: clipboard)
+                NotchClipboardView(clipboard: clipboard, controller: controller)
             case .screenshots:
                 NotchScreenshotsView(screenshots: screenshots)
             case .player:
