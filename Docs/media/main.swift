@@ -236,6 +236,10 @@ MainActor.assumeIsolated {
         write(image, to: "\(name).png")
     }
 
+    if let image = png(Still(section: .clipboard, size: tallSize) { MockClipboard(searchOpen: true) }) {
+        write(image, to: "clipboard-search.png")
+    }
+
     // MARK: Кадры заставки
 
     let fps = 20.0

@@ -89,33 +89,104 @@ struct MockShots: View {
     }
 }
 
+/// Буфер обмена: список, полоса с поиском и очисткой и — если открыт — поиск снизу.
+/// Повторяет NotchClipboardView.
 struct MockClipboard: View {
-    let items = [("Привет, меня зовут Сергей", "18:10", false),
-                 ("https://developer.apple.com/documentation", "18:09", true),
-                 ("NotchDeck", "17:52", false)]
+    var searchOpen = false
+
+    private let items: [(String, String, Bool)] = [
+        ("https://developer.apple.com/documentation/swiftui", "18:09", true),
+        ("Отчёт за сентябрь — финальная версия", "18:12", false),
+        ("Встреча в четверг в 15:00, переговорка 3", "17:58", false),
+        ("brew install --cask iterm2", "17:40", false),
+        ("Пришли, пожалуйста, отчёт до пятницы", "16:21", false),
+    ]
+    private let query = "отч"
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            ForEach(items, id: \.0) { item in
-                HStack(alignment: .top, spacing: 8) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(item.0).font(.system(size: 13)).lineLimit(1)
-                        Text(item.1).font(.system(size: 9)).foregroundStyle(.secondary)
+        VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 6) {
+                VStack(spacing: 4) {
+                    ForEach(items, id: \.0) { row($0, highlight: false) }
+                }
+                .frame(minHeight: 0, maxHeight: .infinity, alignment: .top)
+                .clipped()
+
+                HStack(spacing: 0) {
+                    HStack(spacing: 5) {
+                        Image(systemName: "magnifyingglass").font(.system(size: 10, weight: .semibold))
+                        Text("Поиск").font(.system(size: 11, weight: .medium))
+                        Image(systemName: searchOpen ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 8, weight: .bold)).opacity(0.7)
                     }
+                    .foregroundStyle(searchOpen ? Color.white : Color.secondary)
+                    .padding(.horizontal, 9).frame(height: 22)
+                    .background { Capsule().fill(Color.white.opacity(searchOpen ? 0.16 : 0.07)) }
                     Spacer(minLength: 0)
-                    if item.2 {
-                        Image(systemName: "pin.fill").font(.system(size: 9)).foregroundStyle(.secondary)
+                    Text("Очистить").font(.system(size: 10)).foregroundStyle(.secondary)
+                        .padding(.horizontal, 7).padding(.vertical, 3)
+                        .background { Capsule().fill(Color.white.opacity(0.10)) }
+                }
+            }
+            .frame(height: searchOpen ? NotchConfig.sectionListHeight : nil)
+            .frame(minHeight: 0, maxHeight: searchOpen ? nil : .infinity)
+
+            if searchOpen {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "magnifyingglass").font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        Text(query).font(.system(size: 12))
+                        Rectangle().fill(NotchConfig.accentBlue).frame(width: 1.5, height: 14)
+                        Spacer(minLength: 0)
+                        Image(systemName: "xmark.circle.fill").font(.system(size: 11))
+                            .foregroundStyle(Color.white.opacity(0.4))
+                    }
+                    .padding(.horizontal, 9).frame(height: 26)
+                    .background { RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.white.opacity(0.08)) }
+
+                    VStack(spacing: 4) {
+                        row(("Отчёт за сентябрь — финальная версия", "18:12", false))
+                        row(("Пришли, пожалуйста, отчёт до пятницы", "16:21", false))
+                        row(("Отчёты лежат в общей папке /Reports", "вчера", false))
                     }
                 }
-                .padding(.horizontal, 8).padding(.vertical, 6)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background { RoundedRectangle(cornerRadius: 7, style: .continuous).fill(sampleFill) }
+                .padding(.top, 10)
+                .frame(height: NotchConfig.tallExtraHeight, alignment: .top)
+            }
+        }
+    }
+
+    private func row(_ item: (String, String, Bool), highlight: Bool = true) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(highlight ? highlighted(item.0) : AttributedString(item.0))
+                    .font(.system(size: 12)).lineLimit(1)
+                Text(item.1).font(.system(size: 9)).foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
-            Text("Очистить").font(.system(size: 10)).foregroundStyle(.secondary)
-                .padding(.horizontal, 7).padding(.vertical, 3)
-                .background { Capsule().fill(sampleFill) }
-                .frame(maxWidth: .infinity, alignment: .trailing)
+            if item.2 {
+                Image(systemName: "pin.fill").font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(NotchConfig.accentBlue).frame(width: 18, height: 18)
+            }
         }
+        .padding(.horizontal, 8).padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background { RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.white.opacity(0.05)) }
+    }
+
+    /// Найденное — синим и жирным, как в приложении.
+    private func highlighted(_ text: String) -> AttributedString {
+        var result = AttributedString(text)
+        var start = text.startIndex
+        while let range = text.range(of: query, options: .caseInsensitive, range: start..<text.endIndex) {
+            if let r = Range(range, in: result) {
+                result[r].foregroundColor = NotchConfig.accentBlue
+                result[r].inlinePresentationIntent = .stronglyEmphasized
+            }
+            start = range.upperBound
+        }
+        return result
     }
 }
 

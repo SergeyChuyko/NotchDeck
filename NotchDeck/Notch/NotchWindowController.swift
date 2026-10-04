@@ -62,6 +62,7 @@ final class NotchWindowController {
     private var collapseWorkItem: DispatchWorkItem?
     private var tallShrinkWorkItem: DispatchWorkItem?
     private var playbackObservers: Set<AnyCancellable> = []
+    private var resignActiveObserver: NSObjectProtocol?
 
     // MARK: - Жизненный цикл
 
@@ -108,6 +109,7 @@ final class NotchWindowController {
         self.hostingView = host
 
         bindController()
+        watchOutsideClicks()
         apply(metrics)
         panel.orderFrontRegardless()
         clipboard.start()
@@ -137,6 +139,25 @@ final class NotchWindowController {
                 )
             }
             .store(in: &playbackObservers)
+    }
+
+    /// Поля ввода активируют приложение — иначе клавиатура до них не доходит. Поэтому клик
+    /// в любое другое место приходит к нам как «приложение перестало быть активным».
+    ///
+    /// Фокус с полей снимаем сами: окно при этом не закрывается, и SwiftUI считал бы,
+    /// что курсор всё ещё стоит в поле, — а вместе с ним держалась бы и защита от закрытия.
+    private func watchOutsideClicks() {
+        resignActiveObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didResignActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.panel?.makeFirstResponder(nil)
+                self.controller.interactionEndedOutside()
+            }
+        }
     }
 
     /// Дописать историю буфера на диск, не дожидаясь отложенного сохранения.

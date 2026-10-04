@@ -53,6 +53,10 @@ final class NotchController: ObservableObject {
     /// Пока внутри плашки идёт работа с клавиатурой, уход курсора её не закрывает.
     private var isInteractionLocked = false
 
+    /// Курсор сейчас над плашкой. Нужен, чтобы клик в другое приложение не закрыл её
+    /// у человека из-под руки, если мышь при этом осталась на ней.
+    private var isPointerInside = false
+
     func setInteractionLocked(_ locked: Bool) {
         isInteractionLocked = locked
         if locked {
@@ -61,12 +65,21 @@ final class NotchController: ObservableObject {
         }
     }
 
+    /// Человек кликнул в другое приложение. Набор текста в плашке на этом закончен —
+    /// значит, и держать её открытой незачем, как если бы он просто увёл мышь.
+    func interactionEndedOutside() {
+        isInteractionLocked = false
+        guard isExpanded, !isPointerInside else { return }
+        collapse()
+    }
+
     // MARK: - Наведение
 
     /// Курсор зашёл на плашку или ушёл с неё.
     func hoverChanged(_ isHovering: Bool) {
         hoverExitWork?.cancel()
         hoverExitWork = nil
+        isPointerInside = isHovering
 
         if isHovering {
             guard Date() >= cooldownUntil else { return }
