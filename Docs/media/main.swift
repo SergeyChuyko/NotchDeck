@@ -27,6 +27,10 @@ struct Panel<Detail: View>: View {
     let size: CGSize
     /// Содержимое проявляется не сразу: в приложении оно появляется по мере раскрытия.
     var contentOpacity: CGFloat = 1
+    /// Панель вытянута вниз — список разделов виден целиком. Задаётся явно, а не по
+    /// размеру: на раскрытии пружина проскакивает обычную высоту, и по размеру список
+    /// на эти кадры показывал бы шестую строку — в заставке он прыгал.
+    var tall = false
     @ViewBuilder let detail: Detail
 
     private var detailHeight: CGFloat {
@@ -59,6 +63,10 @@ struct Panel<Detail: View>: View {
                 .overlay(alignment: .topTrailing) { statusBar }
                 .opacity(contentOpacity)
             }
+            // Как в приложении: всё, что не влезло в плашку на раскрытии, обрезается
+            // её формой. Без этого строки списка торчали из-под неё и мигали.
+            .clipShape(NotchShape(topRadius: NotchConfig.expandedTopRadius,
+                                  bottomRadius: NotchConfig.expandedBottomRadius))
             .environment(\.colorScheme, .dark)
     }
 
@@ -100,7 +108,6 @@ struct Panel<Detail: View>: View {
     /// список прокручен вниз; когда панель вытянута, видно всё.
     private var visibleSections: [NotchSection] {
         let all = NotchSection.allCases
-        let tall = size.height > expandedSize.height
         if tall { return Array(all) }
         return selected == .settings ? Array(all.suffix(NotchConfig.visibleSectionRows))
                                      : Array(all.prefix(NotchConfig.visibleSectionRows))
@@ -143,7 +150,7 @@ struct Still<Detail: View>: View {
     var size = expandedSize
     @ViewBuilder let content: Detail
     var body: some View {
-        Panel(selected: section, size: size) { content }
+        Panel(selected: section, size: size, tall: size.height > expandedSize.height) { content }
             .padding(.horizontal, 24)
             .padding(.bottom, 24)
             .background(Color(red: 0.10, green: 0.11, blue: 0.13))
@@ -370,6 +377,49 @@ MainActor.assumeIsolated {
             time += 1 / fps
         }
         gif(frames, fps: fps, to: "volume.gif")
+    }
+
+    // MARK: Чёлка, пока играет музыка
+
+    do {
+        let fps = 25.0
+        let duration = 3.2
+        let wings = NotchConfig.collapsedSize(notchSize: notchSize, media: true)
+        let accent = Color(red: 0.93, green: 0.42, blue: 0.48)
+        // Те же числа, что у NotchEqualizerView: столбики «дышат» с разными периодами.
+        let low: [CGFloat] = [3, 5, 3, 4], high: [CGFloat] = [11, 8, 13, 9]
+        let periods = [0.84, 1.10, 0.72, 0.96], phases = [0, 0.35, 0.7, 1.05]
+
+        var frames: [CGImage] = []
+        var time = 0.0
+        while time < duration {
+            let frame = Screen(height: 56) {
+                NotchShape(topRadius: NotchConfig.collapsedTopRadius, bottomRadius: NotchConfig.notchBottomRadius)
+                    .fill(Color.black)
+                    .frame(width: wings.width, height: wings.height)
+                    .overlay(alignment: .top) {
+                        HStack(spacing: 0) {
+                            let side = NotchConfig.mediaArtworkHeight(notchHeight: notchSize.height)
+                            artworkSample(side, side)
+                                .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                            Spacer(minLength: 0)
+                            HStack(spacing: 2.5) {
+                                ForEach(0..<4, id: \.self) { i in
+                                    let phase = (time / periods[i] + phases[i]) * 2 * .pi
+                                    let k = CGFloat((sin(phase) + 1) / 2)
+                                    Capsule().fill(accent).frame(width: 2.5, height: low[i] + (high[i] - low[i]) * k)
+                                }
+                            }
+                            .frame(height: 14)
+                        }
+                        .padding(.horizontal, NotchConfig.mediaWingPadding)
+                        .frame(width: wings.width, height: notchSize.height)
+                    }
+            }
+            if let image = png(frame) { frames.append(image) }
+            time += 1 / fps
+        }
+        gif(frames, fps: fps, to: "now-playing.gif")
     }
 
     // MARK: Приветствие
