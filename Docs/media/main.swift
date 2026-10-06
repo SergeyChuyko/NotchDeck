@@ -31,6 +31,9 @@ struct Panel<Detail: View>: View {
     /// размеру: на раскрытии пружина проскакивает обычную высоту, и по размеру список
     /// на эти кадры показывал бы шестую строку — в заставке он прыгал.
     var tall = false
+    /// Радиусы задаются снаружи, чтобы в заставке они ехали вместе с размером.
+    var topRadius = NotchConfig.expandedTopRadius
+    var bottomRadius = NotchConfig.expandedBottomRadius
     @ViewBuilder let detail: Detail
 
     private var detailHeight: CGFloat {
@@ -38,14 +41,16 @@ struct Panel<Detail: View>: View {
     }
 
     var body: some View {
-        NotchShape(topRadius: NotchConfig.expandedTopRadius,
-                   bottomRadius: NotchConfig.expandedBottomRadius)
+        NotchShape(topRadius: topRadius, bottomRadius: bottomRadius)
             .fill(Color.black)
             .frame(width: size.width, height: size.height)
             .overlay {
                 HStack(spacing: 14) {
+                    // Прижат к верху: HStack по умолчанию центрирует по высоте, и пока пружина
+                    // качала панель, список ездил вверх-вниз вместе с ней.
                     sidebar
-                        .frame(width: NotchConfig.sidebarWidth, alignment: .topLeading)
+                        .frame(width: NotchConfig.sidebarWidth)
+                        .frame(maxHeight: .infinity, alignment: .top)
                     Rectangle().fill(Color.white.opacity(0.12)).frame(width: 1)
                     // Высота задана числом, а не .infinity: раздел со снимками выше
                     // отведённого места, и с гибкой высотой он растягивал бы панель
@@ -65,8 +70,7 @@ struct Panel<Detail: View>: View {
             }
             // Как в приложении: всё, что не влезло в плашку на раскрытии, обрезается
             // её формой. Без этого строки списка торчали из-под неё и мигали.
-            .clipShape(NotchShape(topRadius: NotchConfig.expandedTopRadius,
-                                  bottomRadius: NotchConfig.expandedBottomRadius))
+            .clipShape(NotchShape(topRadius: topRadius, bottomRadius: bottomRadius))
             .environment(\.colorScheme, .dark)
     }
 
@@ -165,6 +169,8 @@ struct Hero: View {
     let contentOpacity: CGFloat
     let selected: NotchSection
     let expanded: Bool
+    /// Насколько форма уже «раскрытая»: 0 — радиусы чёлки, 1 — радиусы панели.
+    var openness: Double = 0
 
     static let canvas = CGSize(width: 660, height: 268)
 
@@ -175,13 +181,16 @@ struct Hero: View {
             menuBar
 
             Group {
+                // Радиусы едут той же пружиной, что и размер, — как NotchShape в приложении.
+                let top = lerp(NotchConfig.collapsedTopRadius, NotchConfig.expandedTopRadius, openness)
+                let bottom = lerp(NotchConfig.notchBottomRadius, NotchConfig.expandedBottomRadius, openness)
                 if expanded {
-                    Panel(selected: selected, size: size, contentOpacity: contentOpacity) {
+                    Panel(selected: selected, size: size, contentOpacity: contentOpacity,
+                          topRadius: top, bottomRadius: max(bottom, 0)) {
                         detail(for: selected)
                     }
                 } else {
-                    NotchShape(topRadius: NotchConfig.collapsedTopRadius,
-                               bottomRadius: NotchConfig.notchBottomRadius)
+                    NotchShape(topRadius: top, bottomRadius: max(bottom, 0))
                         .fill(Color.black)
                         .frame(width: size.width, height: size.height)
                 }
@@ -437,19 +446,26 @@ MainActor.assumeIsolated {
         var frames: [CGImage] = []
         var time = 0.0
         while time < duration {
+            // Радиус низа едет вместе с размером, той же пружиной — как в приложении,
+            // где NotchShape анимирует радиусы. Скачком он менялся заметно.
             let size: CGSize
+            let radius: CGFloat
             if time < openAt {
                 size = notchSize
+                radius = NotchConfig.notchBottomRadius
             } else if time < closeAt {
-                size = lerp(notchSize, greeting, spring(time - openAt, response: 0.42, damping: 0.74))
+                let t = spring(time - openAt, response: 0.42, damping: 0.74)
+                size = lerp(notchSize, greeting, t)
+                radius = lerp(NotchConfig.notchBottomRadius, NotchConfig.greetingBottomRadius, t)
             } else {
-                size = lerp(greeting, notchSize, spring(time - closeAt, response: 0.34, damping: 1))
+                let t = spring(time - closeAt, response: 0.34, damping: 1)
+                size = lerp(greeting, notchSize, t)
+                radius = lerp(NotchConfig.greetingBottomRadius, NotchConfig.notchBottomRadius, t)
             }
             let progress = CGFloat(easeInOut(min(1, max(0, (time - writeAt) / NotchConfig.greetingWriteDuration))))
             let opacity = time >= closeAt ? max(0, 1 - (time - closeAt) * 4) : 1
             let frame = Screen(height: 150) {
-                NotchShape(topRadius: NotchConfig.collapsedTopRadius,
-                           bottomRadius: time > openAt ? NotchConfig.greetingBottomRadius : NotchConfig.notchBottomRadius)
+                NotchShape(topRadius: NotchConfig.collapsedTopRadius, bottomRadius: max(radius, 0))
                     .fill(Color.black)
                     .frame(width: size.width, height: size.height)
                     .overlay(alignment: .top) {
@@ -488,6 +504,7 @@ MainActor.assumeIsolated {
         let size: CGSize
         var opacity: CGFloat = 0
         var expanded = false
+        var openness = 0.0
 
         if time < hintAt {
             size = notchSize
@@ -497,18 +514,21 @@ MainActor.assumeIsolated {
         } else if time < closeAt {
             let t = spring(time - openAt, response: 0.42, damping: 0.74)
             size = lerp(hintedSize, expandedSize, t)
+            openness = t
             expanded = true
             // Содержимое догоняет форму, а не появляется вместе с ней.
             opacity = min(1, max(0, (time - openAt - 0.10) / 0.22))
         } else {
             let t = spring(time - closeAt, response: 0.34, damping: 1)
             size = lerp(expandedSize, notchSize, t)
+            openness = 1 - t
             expanded = t < 0.92
             opacity = max(0, 1 - CGFloat(t) * 3)
         }
 
         let selected: NotchSection = time < switchAt ? .player : .screenshots
-        let frame = Hero(size: size, contentOpacity: opacity, selected: selected, expanded: expanded)
+        let frame = Hero(size: size, contentOpacity: opacity, selected: selected, expanded: expanded,
+                         openness: openness)
         if let image = png(frame, scale: 2) { frames.append(image) }
         time += 1 / fps
     }
