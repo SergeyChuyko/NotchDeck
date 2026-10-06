@@ -34,6 +34,9 @@ struct Panel<Detail: View>: View {
     /// Радиусы задаются снаружи, чтобы в заставке они ехали вместе с размером.
     var topRadius = NotchConfig.expandedTopRadius
     var bottomRadius = NotchConfig.expandedBottomRadius
+    /// Перетаскивание табов — приходит через environment, чтобы не тянуть через Still.
+    /// Без него список рисуется обычным столбиком.
+    @Environment(\.notchReorder) private var reorder
     @ViewBuilder let detail: Detail
 
     private var detailHeight: CGFloat {
@@ -117,20 +120,51 @@ struct Panel<Detail: View>: View {
                                      : Array(all.prefix(NotchConfig.visibleSectionRows))
     }
 
-    private var sidebar: some View {
-        VStack(alignment: .leading, spacing: NotchConfig.sectionRowSpacing) {
-            ForEach(visibleSections) { section in
-                Image(systemName: section.systemImage)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(section.tint ?? Color.white.opacity(section == selected ? 1 : 0.6))
-                    .frame(width: NotchConfig.sidebarWidth, height: NotchConfig.sectionRowHeight)
-                    .background {
-                        RoundedRectangle(cornerRadius: 9, style: .continuous)
-                            .fill(Color.white.opacity(section == selected ? 0.14 : 0))
-                    }
+    @ViewBuilder private var sidebar: some View {
+        if let reorder {
+            let lifted = reorder.lifted, liftScale = reorder.liftScale, rowY = reorder.rowY
+            // Поднятый таб рисуется последним — поверх соседей, как zIndex в приложении.
+            let order = visibleSections.filter { $0 != lifted } + (lifted.map { [$0] } ?? [])
+            ZStack(alignment: .topLeading) {
+                ForEach(order) { section in
+                    row(section)
+                        // Под курсором таб подсвечен, как при наведении в приложении.
+                        .background {
+                            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                .fill(Color.white.opacity(section == reorder.cursor && section != selected ? 0.1 : 0))
+                        }
+                        .scaleEffect(section == lifted ? liftScale : 1)
+                        .shadow(color: .black.opacity(section == lifted ? 0.5 * Double(liftScale - 1) / 0.12 : 0),
+                                radius: 6, y: 2)
+                        .offset(y: rowY[section] ?? 0)
+                }
             }
-            Spacer(minLength: 0)
+            .overlay(alignment: .topLeading) {
+                Image(systemName: "cursorarrow")
+                    .font(.system(size: 17))
+                    .foregroundStyle(.white)
+                    .shadow(color: .black, radius: 0.5)
+                    .offset(x: NotchConfig.sidebarWidth * 0.55,
+                            y: (rowY[reorder.cursor] ?? 0) + NotchConfig.sectionRowHeight * 0.45)
+            }
+            .frame(maxHeight: .infinity, alignment: .top)
+        } else {
+            VStack(alignment: .leading, spacing: NotchConfig.sectionRowSpacing) {
+                ForEach(visibleSections) { row($0) }
+                Spacer(minLength: 0)
+            }
         }
+    }
+
+    private func row(_ section: NotchSection) -> some View {
+        Image(systemName: section.systemImage)
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundStyle(section.tint ?? Color.white.opacity(section == selected ? 1 : 0.6))
+            .frame(width: NotchConfig.sidebarWidth, height: NotchConfig.sectionRowHeight)
+            .background {
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(Color.white.opacity(section == selected ? 0.14 : 0))
+            }
     }
 }
 
@@ -143,6 +177,26 @@ func detail(for section: NotchSection) -> some View {
     case .clipboard: MockClipboard()
     case .translator: MockTranslator()
     case .settings: MockSettings()
+    }
+}
+
+/// Где стоит каждый таб и какой поднят — для анимации перетаскивания.
+struct NotchReorder {
+    let rowY: [NotchSection: CGFloat]
+    let lifted: NotchSection?
+    let liftScale: CGFloat
+    /// Над каким табом нарисовать курсор — чтобы на GIF было видно, кто его тянет.
+    let cursor: NotchSection
+}
+
+private struct NotchReorderKey: EnvironmentKey {
+    static let defaultValue: NotchReorder? = nil
+}
+
+extension EnvironmentValues {
+    var notchReorder: NotchReorder? {
+        get { self[NotchReorderKey.self] }
+        set { self[NotchReorderKey.self] = newValue }
     }
 }
 
@@ -386,6 +440,65 @@ MainActor.assumeIsolated {
             time += 1 / fps
         }
         gif(frames, fps: fps, to: "volume.gif")
+    }
+
+    // MARK: Перетаскивание табов
+
+    do {
+        let fps = 25.0
+        let step = NotchConfig.sectionRowHeight + NotchConfig.sectionRowSpacing
+        let base = Array(NotchSection.allCases.prefix(NotchConfig.visibleSectionRows))
+        let dragged = NotchSection.translator
+        let from = CGFloat(base.firstIndex(of: dragged)!) * step
+        let to = 1 * step
+        // Раскадровка: зажали → тянем вверх → отпустили → пауза → обратно вниз, чтобы
+        // петля GIF сходилась без скачка.
+        let pressAt = 0.5, upAt = 0.75, upEnd = 1.9, dropAt = 2.0
+        let backPress = 3.0, downAt = 3.25, downEnd = 4.4, backDrop = 4.5, duration = 5.4
+
+        func ease(_ x: Double) -> Double { x < 0.5 ? 2 * x * x : 1 - pow(-2 * x + 2, 2) / 2 }
+        func progress(_ t: Double, _ a: Double, _ b: Double) -> Double { min(1, max(0, (t - a) / (b - a))) }
+
+        var shown: [NotchSection: CGFloat] = [:]
+        for (i, section) in base.enumerated() { shown[section] = CGFloat(i) * step }
+
+        var frames: [CGImage] = []
+        var time = 0.0
+        while time < duration {
+            // Где таб под курсором и насколько он поднят.
+            let y: CGFloat
+            var lift: Double = 0
+            if time < downAt - 0.25 {
+                y = lerp(from, to, ease(progress(time, upAt, upEnd)))
+                lift = progress(time, pressAt, pressAt + 0.15) - progress(time, dropAt, dropAt + 0.15)
+            } else {
+                y = lerp(to, from, ease(progress(time, downAt, downEnd)))
+                lift = progress(time, backPress, backPress + 0.15) - progress(time, backDrop, backDrop + 0.15)
+            }
+            let isLifted = lift > 0
+
+            // Новый порядок: тащимый — на ближайшее место, остальные заполняют оставшиеся.
+            let slot = min(max(Int((y / step).rounded()), 0), base.count - 1)
+            var order = base.filter { $0 != dragged }
+            order.insert(dragged, at: slot)
+
+            // Соседи догоняют свои места с затуханием — как пружина в приложении.
+            for (i, section) in order.enumerated() where section != dragged {
+                let target = CGFloat(i) * step
+                shown[section] = (shown[section] ?? target) + (target - (shown[section] ?? target)) * 0.35
+            }
+            // Поднятый таб — строго под курсором; отпущенный садится на место.
+            shown[dragged] = isLifted ? y : (shown[dragged] ?? y) + (CGFloat(slot) * step - (shown[dragged] ?? y)) * 0.45
+
+            let frame = Still(section: .player) {
+                MockPlayer()
+            }
+            .environment(\.notchReorder, NotchReorder(rowY: shown, lifted: isLifted ? dragged : nil,
+                                                     liftScale: 1 + 0.12 * CGFloat(lift), cursor: dragged))
+            if let image = png(frame) { frames.append(image) }
+            time += 1 / fps
+        }
+        gif(frames, fps: fps, to: "reorder.gif")
     }
 
     // MARK: Чёлка, пока играет музыка

@@ -21,6 +21,10 @@ struct NotchExpandedView: View {
     let expandedSize: CGSize
 
     @State private var hoveredSection: NotchSection?
+    /// Таб, который сейчас перетаскивают, и откуда его взяли.
+    @State private var draggedSection: NotchSection?
+    @State private var dragStartIndex = 0
+    @State private var dragTranslation: CGFloat = 0
     /// Какая из кнопок верхней полосы под курсором.
     @State private var hoveredControl: String?
 
@@ -208,8 +212,16 @@ struct NotchExpandedView: View {
     private var sidebar: some View {
         ScrollView(.vertical, showsIndicators: false) {
             VStack(alignment: .leading, spacing: NotchConfig.sectionRowSpacing) {
-                ForEach(NotchSection.allCases) { section in
+                ForEach(settings.sectionOrder) { section in
                     row(for: section)
+                        .offset(y: dragOffset(for: section))
+                        // Тащимый таб едет строго за курсором, без пружины: иначе каждая
+                        // перестановка анимировала бы и его, и он отставал бы от мыши.
+                        // Анимируются только соседи и финальная посадка на место.
+                        .transaction { transaction in
+                            if section == draggedSection { transaction.animation = nil }
+                        }
+                        .zIndex(draggedSection == section ? 1 : 0)
                 }
             }
         }
@@ -234,11 +246,81 @@ struct NotchExpandedView: View {
             // рука по привычке всё равно жмёт.
             .onHover { hovering in
                 hoveredSection = hovering ? section : (hoveredSection == section ? nil : hoveredSection)
-                if hovering { select(section) }
+                // Пока таб тащат, он проезжает над соседями — открывать их незачем.
+                if hovering && draggedSection == nil { select(section) }
             }
-            .onTapGesture { select(section) }
+            .scaleEffect(draggedSection == section ? 1.12 : 1)
+            .shadow(color: .black.opacity(draggedSection == section ? 0.5 : 0), radius: 6, y: 2)
+            // Подъём при захвате — своей пружиной: внешний transaction у тащимого таба
+            // анимацию снимает, а эта задаётся уже внутри него.
+            .animation(.spring(response: 0.2, dampingFraction: 0.7), value: draggedSection == section)
+            .simultaneousGesture(TapGesture().onEnded { select(section) })
+            .gesture(reorderGesture(for: section))
             .help(section.title)
             .accessibilityLabel(section.title)
+    }
+
+    // MARK: - Перетаскивание
+
+    /// Шаг между строками: на столько надо сдвинуть таб, чтобы он встал на соседнее место.
+    private var rowStep: CGFloat { NotchConfig.sectionRowHeight + NotchConfig.sectionRowSpacing }
+
+    /// Зажали — подождали — потянули. Без задержки любое касание двигало бы таб,
+    /// а наведение и клик и так открывают раздел.
+    private func reorderGesture(for section: NotchSection) -> some Gesture {
+        LongPressGesture(minimumDuration: 0.25)
+            // Координаты окна, а не самого таба: таб едет за мышью, и в его собственных
+            // координатах сдвиг выходил меньше настоящего — он отставал от курсора.
+            .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .global))
+            .onChanged { value in
+                guard case .second(true, let drag) = value else { return }
+                if draggedSection == nil { beginDrag(section) }
+                updateDrag(drag?.translation.height ?? 0)
+            }
+            .onEnded { _ in endDrag() }
+    }
+
+    private func beginDrag(_ section: NotchSection) {
+        dragStartIndex = settings.sectionOrder.firstIndex(of: section) ?? 0
+        dragTranslation = 0
+        // Пока тащат, плашка не закрывается, даже если курсор соскользнёт с края.
+        controller.setInteractionLocked(true)
+        draggedSection = section
+    }
+
+    /// Таб едет за курсором, а как только его центр переходит на соседнее место —
+    /// меняется с соседом. Сосед уезжает анимированно, сам таб остаётся под курсором.
+    private func updateDrag(_ translation: CGFloat) {
+        guard let dragged = draggedSection,
+              let current = settings.sectionOrder.firstIndex(of: dragged) else { return }
+        dragTranslation = translation
+
+        let last = settings.sectionOrder.count - 1
+        let target = min(max(dragStartIndex + Int((translation / rowStep).rounded()), 0), last)
+        guard target != current else { return }
+
+        withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
+            var order = settings.sectionOrder
+            order.remove(at: current)
+            order.insert(dragged, at: target)
+            settings.sectionOrder = order
+        }
+    }
+
+    private func endDrag() {
+        controller.setInteractionLocked(false)
+        withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+            draggedSection = nil
+            dragTranslation = 0
+        }
+    }
+
+    /// Смещение тащимого таба от его нынешнего места: сколько протащили минус то,
+    /// на сколько мест он уже переехал.
+    private func dragOffset(for section: NotchSection) -> CGFloat {
+        guard section == draggedSection,
+              let current = settings.sectionOrder.firstIndex(of: section) else { return 0 }
+        return dragTranslation - CGFloat(current - dragStartIndex) * rowStep
     }
 
     private func select(_ section: NotchSection) {

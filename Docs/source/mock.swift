@@ -87,36 +87,52 @@ struct MockSlider: View {
     }
 }
 
-/// Настройки — как NotchSettingsView: переключатели и подсказки.
+/// Настройки — как NotchSettingsView: карточки с рамкой в две колонки.
 struct MockSettings: View {
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            toggle("Плеер на паузе", "Обложка и эквалайзер остаются на чёлке, когда музыка на паузе. Выключите — и на паузе чёлка станет обычной.", on: true)
-            toggle("Приветствие при запуске", "При каждом запуске из чёлки спускается «hello».", on: true)
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Text("Громкость на чёлке").font(.system(size: 13, weight: .medium))
-                    Circle().fill(Color.green).frame(width: 6, height: 6)
+        Grid(horizontalSpacing: 8, verticalSpacing: 8) {
+            GridRow {
+                card("Плеер на паузе", "Обложка остаётся на чёлке, пока музыка на паузе.") { toggle }
+                card("Приветствие", "«hello» из чёлки при каждом запуске.", link: "Показать") { toggle }
+            }
+            GridRow {
+                card("Громкость на чёлке", "Системный индикатор скрыт.", status: .green) { EmptyView() }
+                card("Порядок табов", "Табы слева переставляются перетаскиванием.") {
+                    Text("Сбросить").font(.system(size: 11, weight: .semibold)).foregroundStyle(.white)
+                        .padding(.horizontal, 10).padding(.vertical, 5)
+                        .background { Capsule().fill(NotchConfig.settingsOrange) }
                 }
-                Text("Системный индикатор громкости скрыт — громкость видна только на чёлке.")
-                    .font(.system(size: 10)).foregroundStyle(.secondary)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
-    private func toggle(_ title: String, _ detail: String, on: Bool) -> some View {
-        HStack(alignment: .top, spacing: 12) {
+    private var toggle: some View {
+        Capsule().fill(NotchConfig.settingsOrange).frame(width: 34, height: 20)
+            .overlay(alignment: .trailing) { Circle().fill(Color.white).padding(2) }
+    }
+
+    private func card<C: View>(_ title: String, _ detail: String, status: Color? = nil, link: String? = nil,
+                               @ViewBuilder control: () -> C) -> some View {
+        HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(.system(size: 13, weight: .medium))
+                HStack(spacing: 6) {
+                    Text(title).font(.system(size: 12, weight: .semibold))
+                    if let status { Circle().fill(status).frame(width: 6, height: 6) }
+                }
                 Text(detail).font(.system(size: 10)).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                if let link {
+                    Text(link).font(.system(size: 10, weight: .semibold)).foregroundStyle(NotchConfig.settingsOrange)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            Capsule().fill(on ? NotchConfig.settingsOrange : Color.white.opacity(0.2))
-                .frame(width: 34, height: 20)
-                .overlay(alignment: on ? .trailing : .leading) { Circle().fill(Color.white).padding(2) }
+            control()
         }
+        .padding(.horizontal, 12).padding(.vertical, 10)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .background { RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.white.opacity(0.04)) }
+        .overlay { RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Color.white.opacity(0.12), lineWidth: 1) }
     }
 }
 

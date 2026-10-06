@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// Раздел «Настройки»: вертикальный список переключателей.
+/// Раздел «Настройки»: карточки в две колонки. Каждая — название, короткая подсказка
+/// и управление справа, по центру карточки. Рамка у каждой, чтобы они не сливались.
 struct NotchSettingsView: View {
 
     @ObservedObject var settings: NotchSettings
@@ -11,80 +12,115 @@ struct NotchSettingsView: View {
 
     var body: some View {
         ScrollView(.vertical, showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 12) {
-                row(title: "Плеер на паузе",
-                    detail: "Обложка и эквалайзер остаются на чёлке, когда музыка на паузе. "
-                        + "Выключите — и на паузе чёлка станет обычной.",
-                    isOn: $settings.showsPausedPlayer)
+            // Обычная Grid, а не ленивая: карточек немного, а в одном ряду они так
+            // получают одну высоту и рамки стоят ровно.
+            Grid(horizontalSpacing: 8, verticalSpacing: 8) {
+                GridRow {
+                    card(title: "Плеер на паузе",
+                         detail: "Обложка остаётся на чёлке, пока музыка на паузе.") {
+                        NotchSwitch(isOn: $settings.showsPausedPlayer)
+                    }
 
-                row(title: "Приветствие при запуске",
-                    detail: "При каждом запуске из чёлки спускается «hello».",
-                    isOn: $settings.greetsOnLaunch)
+                    card(title: "Приветствие", detail: "«hello» из чёлки при каждом запуске.",
+                         link: ("Показать", { controller.requestGreeting?() })) {
+                        NotchSwitch(isOn: $settings.greetsOnLaunch)
+                    }
+                }
 
-                volumeKeysRow
+                GridRow {
+                    card(title: "Громкость на чёлке",
+                         detail: volumeKeys.isActive
+                            ? "Системный индикатор скрыт."
+                            : "Нужен «Универсальный доступ».",
+                         status: volumeKeys.isActive ? .green : NotchConfig.settingsOrange) {
+                        if !volumeKeys.isActive {
+                            button(id: "accessibility", title: "Открыть", isEnabled: true) {
+                                volumeKeys.openAccessibilitySettings()
+                            }
+                        }
+                    }
 
-                button(id: "greet", title: "Показать приветствие") { controller.requestGreeting?() }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    private func row(title: String, detail: String, isOn: Binding<Bool>) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                    .font(.system(size: 13, weight: .medium))
-                Text(detail)
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            NotchSwitch(isOn: isOn)
-        }
-    }
-
-    /// Громкость только на чёлке: работает, когда выдан «Универсальный доступ».
-    /// Без него — подсказка и кнопка в нужный раздел настроек.
-    private var volumeKeysRow: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Text("Громкость на чёлке")
-                    .font(.system(size: 13, weight: .medium))
-                Circle()
-                    .fill(volumeKeys.isActive ? Color.green : NotchConfig.settingsOrange)
-                    .frame(width: 6, height: 6)
-            }
-            Text(volumeKeys.isActive
-                 ? "Системный индикатор громкости скрыт — громкость видна только на чёлке."
-                 : "Чтобы скрыть системный индикатор громкости, разрешите NotchDeck "
-                    + "«Универсальный доступ» в настройках.")
-                .font(.system(size: 10))
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            if !volumeKeys.isActive {
-                button(id: "accessibility", title: "Открыть настройки") {
-                    volumeKeys.openAccessibilitySettings()
+                    card(title: "Порядок табов", detail: "Табы слева переставляются перетаскиванием.") {
+                        button(id: "resetOrder", title: "Сбросить", isEnabled: !settings.isDefaultSectionOrder) {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                                settings.resetSectionOrder()
+                            }
+                        }
+                    }
                 }
             }
         }
     }
 
-    private func button(id: String, title: String, action: @escaping () -> Void) -> some View {
-        Text(title)
-            .font(.system(size: 11, weight: .medium))
+    /// Карточка настройки. `link` — необязательное действие строкой под подсказкой,
+    /// `status` — цветная точка у названия.
+    private func card<Control: View>(title: String, detail: String,
+                                     status: Color? = nil,
+                                     link: (String, () -> Void)? = nil,
+                                     @ViewBuilder control: () -> Control) -> some View {
+        HStack(alignment: .center, spacing: 10) {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(title).font(.system(size: 12, weight: .semibold))
+                    if let status {
+                        Circle().fill(status).frame(width: 6, height: 6)
+                    }
+                }
+                Text(detail)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let link {
+                    Text(link.0)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(NotchConfig.settingsOrange)
+                        .opacity(hoveredButton == "link-" + title ? 0.7 : 1)
+                        .contentShape(Rectangle())
+                        .onHover { hovering in
+                            hoveredButton = hovering ? "link-" + title : nil
+                        }
+                        .onTapGesture(perform: link.1)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            control()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .background {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.primary.opacity(0.04))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
+        }
+    }
+
+    /// Оранжевая, когда есть что делать; серая и неактивная — когда нечего.
+    private func button(id: String, title: String, isEnabled: Bool,
+                        action: @escaping () -> Void) -> some View {
+        let hovered = hoveredButton == id && isEnabled
+
+        return Text(title)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(isEnabled ? Color.white : Color.secondary)
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
             .background {
-                Capsule().fill(Color.primary.opacity(hoveredButton == id ? 0.16 : 0.09))
+                Capsule().fill(isEnabled
+                               ? NotchConfig.settingsOrange.opacity(hovered ? 0.8 : 1)
+                               : Color.primary.opacity(0.1))
             }
             .contentShape(Capsule())
             .onHover { hovering in
                 hoveredButton = hovering ? id : (hoveredButton == id ? nil : hoveredButton)
             }
-            .onTapGesture(perform: action)
+            .onTapGesture { if isEnabled { action() } }
+            .animation(.easeOut(duration: 0.15), value: isEnabled)
     }
 }
 
