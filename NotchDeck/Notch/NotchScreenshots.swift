@@ -218,6 +218,11 @@ final class NotchScreenshots: NSObject, ObservableObject {
         thumbnails[shot.url] = nil
     }
 
+    /// Открыть в Finder саму папку, куда система складывает скриншоты.
+    func openFolder() {
+        NSWorkspace.shared.open(screenshotDirectory)
+    }
+
     func revealInFinder(_ shot: Shot) {
         NSWorkspace.shared.activateFileViewerSelecting([shot.url])
     }

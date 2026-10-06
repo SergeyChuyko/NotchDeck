@@ -4,41 +4,155 @@ import SwiftUI
 // Настоящие данные сюда не берём: документ уйдёт другим людям, а в скриншотах
 // и буфере лежит личное. Размеры и вёрстка — те же, что в приложении.
 
+/// Плеер: обложка слева, справа название с лайком, кнопки и перемотка, у края громкость.
+/// Повторяет NotchMediaView — размеры из NotchConfig.
 struct MockPlayer: View {
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                artworkSample(104, 104)
-                Image(systemName: "arrow.triangle.2.circlepath")
-                    .font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
-                    .frame(width: 27, height: 27)
-                Spacer(minLength: 0)
-            }
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Bohemian Rhapsody").font(.system(size: 13, weight: .semibold))
-                Text("Queen").font(.system(size: 11)).foregroundStyle(.secondary)
-                Spacer(minLength: 6)
-                VStack(spacing: 3) {
-                    GeometryReader { g in
-                        ZStack(alignment: .leading) {
-                            Capsule().fill(Color.white.opacity(0.12))
-                            Capsule().fill(Color.white.opacity(0.5)).frame(width: g.size.width * 0.42)
-                        }.frame(height: 3)
-                    }.frame(height: 3)
-                    HStack {
-                        Text("2:29").font(.system(size: 9)).monospacedDigit()
-                        Spacer()
-                        Text("5:55").font(.system(size: 9)).monospacedDigit()
-                    }.foregroundStyle(.secondary)
+        GeometryReader { g in
+            HStack(spacing: 14) {
+                artworkSample(NotchConfig.playerArtworkHeight, NotchConfig.playerArtworkHeight)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .frame(maxHeight: .infinity, alignment: .top)
+
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack(alignment: .top, spacing: 8) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Bohemian Rhapsody").font(.system(size: 16, weight: .semibold))
+                            Text("Queen").font(.system(size: 13)).foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        Image(systemName: "heart.fill").font(.system(size: 15, weight: .medium))
+                            .foregroundStyle(NotchConfig.favoriteYellow).frame(width: 30, height: 30)
+                    }
+                    Spacer(minLength: 4)
+                    HStack(spacing: 22) {
+                        Image(systemName: "backward.fill").font(.system(size: 24, weight: .medium)).frame(width: 36, height: 36)
+                        Image(systemName: "pause.fill").font(.system(size: 34, weight: .medium)).frame(width: 46, height: 46)
+                        Image(systemName: "forward.fill").font(.system(size: 24, weight: .medium)).frame(width: 36, height: 36)
+                    }
+                    .frame(maxWidth: .infinity)
+                    Spacer(minLength: 4)
+                    HStack(spacing: 8) {
+                        Text("2:29").font(.system(size: 9)).monospacedDigit().foregroundStyle(.secondary)
+                        MockSlider(axis: .horizontal, fraction: 0.42, thickness: 4, thumb: true)
+                        Text("5:55").font(.system(size: 9)).monospacedDigit().foregroundStyle(.secondary)
+                    }
+                    .frame(height: 16)
                 }
-                HStack(spacing: 14) {
-                    Image(systemName: "backward.fill").font(.system(size: 12, weight: .medium)).frame(width: 28, height: 28)
-                    Image(systemName: "pause.fill").font(.system(size: 15, weight: .medium)).frame(width: 31, height: 31)
-                    Image(systemName: "forward.fill").font(.system(size: 12, weight: .medium)).frame(width: 28, height: 28)
+                .padding(.bottom, NotchConfig.playerBottomInset)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+
+                VStack(spacing: 8) {
+                    Image(systemName: "speaker.wave.2.fill").font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.white).frame(width: 24, height: 18)
+                    MockSlider(axis: .vertical, fraction: 0.6, thickness: 10, thumb: false)
+                        .frame(height: max(g.size.height * 2 / 3 - 26, 30))
                 }
-                .frame(maxWidth: .infinity, alignment: .center).padding(.top, 6)
+                .frame(width: 24)
+                .frame(maxHeight: .infinity)
             }
         }
+    }
+}
+
+/// Полоса как NotchSlider: белая заливка на полупрозрачной подложке, у перемотки — кружок.
+struct MockSlider: View {
+    let axis: Axis
+    let fraction: CGFloat
+    let thickness: CGFloat
+    let thumb: Bool
+
+    var body: some View {
+        GeometryReader { g in
+            let length = axis == .horizontal ? g.size.width : g.size.height
+            let knob: CGFloat = thumb ? 11 : 0
+            let offset = (length - knob) * fraction
+            let filled = thumb ? offset + knob / 2 : length * fraction
+            ZStack(alignment: axis == .horizontal ? .leading : .bottom) {
+                Capsule().fill(Color.white.opacity(0.25))
+                    .frame(width: axis == .horizontal ? length : thickness, height: axis == .horizontal ? thickness : length)
+                Rectangle().fill(Color.white)
+                    .frame(width: axis == .horizontal ? filled : thickness, height: axis == .horizontal ? thickness : filled)
+                    .frame(width: axis == .horizontal ? length : thickness, height: axis == .horizontal ? thickness : length,
+                           alignment: axis == .horizontal ? .leading : .bottom)
+                    .clipShape(Capsule())
+                if thumb {
+                    Circle().fill(Color.white).shadow(color: .black.opacity(0.35), radius: 2, y: 1)
+                        .frame(width: knob, height: knob).offset(x: offset)
+                }
+            }
+            .frame(width: g.size.width, height: g.size.height, alignment: axis == .horizontal ? .leading : .bottom)
+        }
+        .frame(width: axis == .vertical ? 16 : nil, height: axis == .horizontal ? 16 : nil)
+    }
+}
+
+/// Настройки — как NotchSettingsView: переключатели и подсказки.
+struct MockSettings: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            toggle("Плеер на паузе", "Обложка и эквалайзер остаются на чёлке, когда музыка на паузе. Выключите — и на паузе чёлка станет обычной.", on: true)
+            toggle("Приветствие при запуске", "При каждом запуске из чёлки спускается «hello».", on: true)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text("Громкость на чёлке").font(.system(size: 13, weight: .medium))
+                    Circle().fill(Color.green).frame(width: 6, height: 6)
+                }
+                Text("Системный индикатор громкости скрыт — громкость видна только на чёлке.")
+                    .font(.system(size: 10)).foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private func toggle(_ title: String, _ detail: String, on: Bool) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title).font(.system(size: 13, weight: .medium))
+                Text(detail).font(.system(size: 10)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Capsule().fill(on ? NotchConfig.settingsOrange : Color.white.opacity(0.2))
+                .frame(width: 34, height: 20)
+                .overlay(alignment: on ? .trailing : .leading) { Circle().fill(Color.white).padding(2) }
+        }
+    }
+}
+
+/// Крылья громкости на свёрнутой чёлке — как NotchVolumeHUDView.
+/// `shake` — сдвиг значка в момент выключения звука.
+struct MockVolumeHUD: View {
+    let level: CGFloat
+    var shake: CGFloat = 0
+    let notchHeight: CGFloat
+
+    private var silent: Bool { level == 0 }
+    private var symbol: String {
+        silent ? "speaker.slash.fill"
+            : level < 0.33 ? "speaker.wave.1.fill" : level < 0.66 ? "speaker.wave.2.fill" : "speaker.wave.3.fill"
+    }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            HStack(spacing: 5) {
+                Image(systemName: symbol).font(.system(size: 11, weight: .semibold))
+                    .frame(width: 16, alignment: .leading).offset(x: shake)
+                Text("Sound").font(.system(size: 11, weight: .semibold))
+            }
+            .foregroundStyle(silent ? NotchConfig.volumeRed : Color.white)
+            .frame(width: NotchConfig.volumeHUDWingWidth)
+            Spacer(minLength: 0)
+            GeometryReader { g in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.white.opacity(0.25))
+                    Capsule().fill(Color.white).frame(width: max(g.size.width * level, level > 0 ? 5 : 0))
+                }
+            }
+            .frame(height: 5).padding(.horizontal, 12)
+            .frame(width: NotchConfig.volumeHUDWingWidth)
+        }
+        .frame(height: notchHeight)
     }
 }
 

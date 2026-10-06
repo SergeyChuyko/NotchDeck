@@ -11,6 +11,9 @@ struct NotchExpandedView: View {
     @ObservedObject var media: NotchMedia
     @ObservedObject var battery: NotchBattery
     @ObservedObject var system: NotchSystemControls
+    @ObservedObject var volume: NotchVolume
+    @ObservedObject var volumeKeys: NotchVolumeKeys
+    @ObservedObject var settings: NotchSettings
 
     /// Высота физической чёлки: верхнюю полосу плашки она перекрывает,
     /// поэтому контент начинается ниже.
@@ -24,7 +27,8 @@ struct NotchExpandedView: View {
     var body: some View {
         HStack(spacing: 14) {
             sidebar
-                .frame(width: NotchConfig.sidebarWidth, alignment: .topLeading)
+                .frame(width: NotchConfig.sidebarWidth)
+                .frame(maxHeight: .infinity, alignment: .top)
 
             Rectangle()
                 .fill(Color.primary.opacity(0.12))
@@ -172,22 +176,42 @@ struct NotchExpandedView: View {
     ///
     /// Список слева теперь из одних значков, так что подписать раздел больше негде.
     private var sectionTitle: some View {
-        Text(controller.selectedSection.title)
-            .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 16)
-            .frame(height: topInset)
-            .allowsHitTesting(false)
+        HStack(spacing: 4) {
+            Text(controller.selectedSection.title)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.secondary)
+                .allowsHitTesting(false)
+
+            // У скриншотов рядом с заголовком — папка, куда они сохраняются.
+            if controller.selectedSection == .screenshots {
+                stripButton(id: "screenshotsFolder", help: "Открыть папку со скриншотами") {
+                    screenshots.openFolder()
+                } content: {
+                    Image(systemName: "folder.fill")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(NotchConfig.accentBlue)
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .frame(height: topInset)
     }
 
     // MARK: - Список разделов
 
+    /// Видно ровно пять строк — по ним считается высота плашки. Настройки лежат
+    /// шестой строкой ниже, до них доходят прокруткой: высоту ради них плашка не растит.
+    ///
+    /// Высоту список берёт у плашки, а не держит свою: когда переводчик или буфер
+    /// вытягивают её вниз, список растёт вместе с ней и показывает всё сразу, оставаясь
+    /// прижатым к верху. С фиксированной высотой его уводило в середину столбца.
     private var sidebar: some View {
-        VStack(alignment: .leading, spacing: NotchConfig.sectionRowSpacing) {
-            ForEach(NotchSection.allCases) { section in
-                row(for: section)
+        ScrollView(.vertical, showsIndicators: false) {
+            VStack(alignment: .leading, spacing: NotchConfig.sectionRowSpacing) {
+                ForEach(NotchSection.allCases) { section in
+                    row(for: section)
+                }
             }
-            Spacer(minLength: 0)
         }
     }
 
@@ -206,16 +230,22 @@ struct NotchExpandedView: View {
                     .fill(Color.primary.opacity(isSelected ? 0.14 : (isHovered ? 0.07 : 0)))
             }
             .contentShape(Rectangle())
+            // Раздел открывается наведением, клик не нужен. Клик тоже оставлен —
+            // рука по привычке всё равно жмёт.
             .onHover { hovering in
                 hoveredSection = hovering ? section : (hoveredSection == section ? nil : hoveredSection)
+                if hovering { select(section) }
             }
-            .onTapGesture {
-                withAnimation(.easeInOut(duration: 0.16)) {
-                    controller.selectedSection = section
-                }
-            }
+            .onTapGesture { select(section) }
             .help(section.title)
             .accessibilityLabel(section.title)
+    }
+
+    private func select(_ section: NotchSection) {
+        guard controller.selectedSection != section else { return }
+        withAnimation(.easeInOut(duration: 0.16)) {
+            controller.selectedSection = section
+        }
     }
 
     // MARK: - Содержимое раздела
@@ -230,9 +260,11 @@ struct NotchExpandedView: View {
             case .screenshots:
                 NotchScreenshotsView(screenshots: screenshots)
             case .player:
-                NotchMediaView(media: media, controller: controller)
+                NotchMediaView(media: media, volume: volume, controller: controller)
             case .search:
                 NotchSearchView(controller: controller)
+            case .settings:
+                NotchSettingsView(settings: settings, volumeKeys: volumeKeys, controller: controller)
             }
         }
         .id(controller.selectedSection)

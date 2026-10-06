@@ -1,17 +1,21 @@
 import SwiftUI
 
-/// Раздел «Плеер»: обложка по центру, под ней название, полоса перемотки и кнопки.
+/// Раздел «Плеер»: обложка слева, справа название, кнопки и полоса перемотки,
+/// у самого края — громкость.
 /// Показывает то, что играет в системе, — хоть трек в Музыке, хоть видео в браузере.
 struct NotchMediaView: View {
 
     @ObservedObject var media: NotchMedia
+    @ObservedObject var volume: NotchVolume
     @ObservedObject var controller: NotchController
 
-    /// Какая из трёх кнопок под курсором.
+    /// Какая из кнопок под курсором: 0–2 управление, 3 обновление, 4 лайк.
     @State private var hoveredControl: Int?
     /// Позиция, которую пользователь тащит прямо сейчас. Пока она есть, время и полоса
     /// показывают её, а не то, что приходит от плеера, — иначе ползунок дёргался бы.
     @State private var scrubbing: TimeInterval?
+    /// Громкость тянут прямо сейчас — кружок на её полосе подрастает.
+    @State private var adjustingVolume = false
 
     var body: some View {
         Group {
@@ -50,21 +54,34 @@ struct NotchMediaView: View {
 
     // MARK: - Плеер
 
+    /// Слева обложка во всю высоту раздела, справа от неё столбец: название с исполнителем,
+    /// кнопки и полоса перемотки. У правого края — вертикальная громкость.
     private func player(_ track: NotchMedia.Track) -> some View {
         GeometryReader { geometry in
-            VStack(spacing: 6) {
-                artwork(fitting: geometry.size)
-                titles(track)
+            HStack(spacing: 14) {
+                artwork(height: min(geometry.size.height, NotchConfig.playerArtworkHeight))
+                    // Верх обложки вровень с верхом названия.
+                    .frame(maxHeight: .infinity, alignment: .top)
 
-                Spacer(minLength: 0)
-
-                if track.duration > 0 {
-                    progress(track)
+                VStack(alignment: .leading, spacing: 0) {
+                    header(track)
+                    // Кнопки посередине между названием и полосой, а не прижаты к ней.
+                    Spacer(minLength: 4)
+                    controls
+                    Spacer(minLength: 4)
+                    if track.duration > 0 {
+                        progress(track)
+                    }
                 }
+                // Полоса не прижата к самому низу — так она читается частью плеера,
+                // а не кромкой плашки.
+                .padding(.bottom, NotchConfig.playerBottomInset)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
 
-                controls
+                if volume.isAvailable {
+                    volumeControl(height: geometry.size.height)
+                }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
@@ -77,56 +94,70 @@ struct NotchMediaView: View {
         return (track.title, track.artist.isEmpty ? track.application : track.artist)
     }
 
-    /// Одна строка на название и одна на исполнителя: в столбик места по высоте мало,
-    /// а название видео бывает длиной в абзац — в две строки оно съедало бы обложку.
-    private func titles(_ track: NotchMedia.Track) -> some View {
+    /// Название, под ним исполнитель, справа лайк — если источник его понимает.
+    private func header(_ track: NotchMedia.Track) -> some View {
         let captions = captions(track)
 
-        return VStack(spacing: 1) {
-            Text(captions.title)
-                .font(.system(size: 13, weight: .semibold))
-                .lineLimit(1)
+        return HStack(alignment: .top, spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                // Две строки названию: обложка теперь сбоку, и по высоте место есть,
+                // а длинные названия видео в одну строку обрезались на полуслове.
+                Text(captions.title)
+                    .font(.system(size: 16, weight: .semibold))
+                    .lineLimit(2)
 
-            if !captions.subtitle.isEmpty {
-                Text(captions.subtitle)
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                if !captions.subtitle.isEmpty {
+                    Text(captions.subtitle)
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            if media.like != .unavailable {
+                likeButton
             }
         }
-        .multilineTextAlignment(.center)
-        .frame(maxWidth: 380)
-        .frame(maxWidth: .infinity)
     }
+
+    /// У видео — палец вверх, у музыки — сердечко. Отмеченный закрашен жёлтым.
+    private var likeButton: some View {
+        let liked = media.like == .on
+        let symbol = isVideo ? "hand.thumbsup" : "heart"
+
+        return Image(systemName: liked ? symbol + ".fill" : symbol)
+            .font(.system(size: 15, weight: .medium))
+            .foregroundStyle(liked ? NotchConfig.favoriteYellow : Color.primary.opacity(0.7))
+            .frame(width: 30, height: 30)
+            .background {
+                Circle().fill(Color.primary.opacity(hoveredControl == 4 ? 0.12 : 0))
+            }
+            .contentShape(Circle())
+            .onHover { hovering in
+                hoveredControl = hovering ? 4 : (hoveredControl == 4 ? nil : hoveredControl)
+            }
+            .onTapGesture {
+                withAnimation(.spring(response: 0.25, dampingFraction: 0.6)) { media.toggleLike() }
+            }
+            .scaleEffect(liked ? 1.08 : 1)
+            .help(liked ? "Убрать отметку" : "Нравится")
+    }
+
+    /// Видео узнаём по широкому превью: у альбомов обложка квадратная.
+    private var isVideo: Bool { artworkAspect > 1.2 }
 
     /// Пропорции самой картинки: у альбомов обложка квадратная, у видео — широкая.
-    /// Крайности зажимаем, чтобы совсем узкая или длинная не перекосила раздел.
+    /// Крайности зажимаем: обложка стоит сбоку, и слишком широкая съела бы столбец справа.
     private var artworkAspect: CGFloat {
         guard let size = media.artwork?.size, size.width > 0, size.height > 0 else { return 1 }
-        return min(max(size.width / size.height, 0.6), 2.2)
+        return min(max(size.width / size.height, 1), 1.6)
     }
 
-    /// Размер считаем сами, а не через `.aspectRatio` с `maxWidth`/`maxHeight`:
-    /// такая рамка занимает весь отведённый прямоугольник целиком, и картинка в оверлее
-    /// снова растягивается на него — ровно тот случай, когда широкое превью резалось в квадрат.
-    private func artworkSize(fitting available: CGSize) -> CGSize {
-        // Всё остальное теперь стоит под обложкой, а не сбоку: название с исполнителем,
-        // полоса и кнопки. Их высоту вычитаем первой — им место нужнее.
-        let reserved: CGFloat = 92
-        let maxHeight = min(96, max(36, available.height - reserved))
-        // По ширине обложка ограничена слабее: широкое превью видео тут не мешает,
-        // но растянуться на весь раздел ему тоже незачем.
-        let maxWidth = available.width * 0.6
-        let aspect = artworkAspect
+    private func artwork(height: CGFloat) -> some View {
+        let size = CGSize(width: (height * artworkAspect).rounded(), height: height)
 
-        let width = min(maxWidth, maxHeight * aspect)
-        return CGSize(width: width, height: width / aspect)
-    }
-
-    private func artwork(fitting available: CGSize) -> some View {
-        let size = artworkSize(fitting: available)
-
-        return RoundedRectangle(cornerRadius: 10, style: .continuous)
+        return RoundedRectangle(cornerRadius: 12, style: .continuous)
             .fill(Color.primary.opacity(0.08))
             .frame(width: size.width, height: size.height)
             .overlay {
@@ -134,23 +165,24 @@ struct NotchMediaView: View {
                     Image(nsImage: image)
                         .resizable()
                         .aspectRatio(contentMode: .fill)
-                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .frame(width: size.width, height: size.height)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 } else {
-                    Image(systemName: "play.circle")
-                        .font(.system(size: 22))
+                    Image(systemName: "music.note")
+                        .font(.system(size: 26))
                         .foregroundStyle(.tertiary)
                 }
             }
             .overlay {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
             }
             .animation(.easeInOut(duration: 0.2), value: artworkAspect)
     }
 
+    // MARK: - Перемотка
+
     /// Мост присылает позицию редко, поэтому между его сообщениями досчитываем её сами.
-    /// Время по краям полосы, а не строкой под ней: в столбик высота на счету,
-    /// и отдельная строка отняла бы её у обложки.
     private func progress(_ track: NotchMedia.Track) -> some View {
         TimelineView(.periodic(from: .now, by: 0.5)) { context in
             let position = scrubbing ?? media.position(at: context.date)
@@ -158,60 +190,23 @@ struct NotchMediaView: View {
 
             HStack(spacing: 8) {
                 timeCode(position)
-                seekBar(track, fraction: fraction)
+                NotchSlider(axis: .horizontal, fraction: CGFloat(fraction),
+                            isActive: scrubbing != nil) { value, ended in
+                    let target = TimeInterval(value) * track.duration
+                    if ended {
+                        media.seek(to: target)
+                        scrubbing = nil
+                    } else {
+                        scrubbing = target
+                    }
+                    // Пока тянут, панель не должна закрыться, даже если курсор
+                    // соскользнёт с её края.
+                    controller.setInteractionLocked(!ended)
+                }
                 timeCode(track.duration)
             }
-            .frame(maxWidth: 380)
-            .frame(maxWidth: .infinity)
         }
-        .frame(height: 14)
-    }
-
-    /// Полоса перемотки. Своя, а не системный Slider: окно панели никогда не активно,
-    /// и готовые элементы управления в нём ведут себя ненадёжно.
-    private func seekBar(_ track: NotchMedia.Track, fraction: CGFloat) -> some View {
-        GeometryReader { geometry in
-            let width = geometry.size.width
-
-            ZStack(alignment: .leading) {
-                Capsule().fill(Color.primary.opacity(0.12))
-                Capsule()
-                    .fill(Color.primary.opacity(scrubbing == nil ? 0.5 : 0.8))
-                    .frame(width: width * fraction)
-
-                // Кружок появляется только на перемотке — иначе он лишний шум.
-                if scrubbing != nil {
-                    Circle()
-                        .fill(Color.primary)
-                        .frame(width: 8, height: 8)
-                        .offset(x: width * fraction - 4)
-                }
-            }
-            .frame(height: 3)
-            // Полоса тонкая, попасть в неё курсором тяжело — ловим на всю высоту строки.
-            .frame(height: 14)
-            .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { value in
-                        // Пока тянут, панель не должна закрыться, даже если курсор
-                        // соскользнёт с её края.
-                        controller.setInteractionLocked(true)
-                        scrubbing = position(at: value.location.x, width: width, of: track)
-                    }
-                    .onEnded { value in
-                        media.seek(to: position(at: value.location.x, width: width, of: track))
-                        scrubbing = nil
-                        controller.setInteractionLocked(false)
-                    }
-            )
-        }
-        .frame(height: 14)
-    }
-
-    private func position(at x: CGFloat, width: CGFloat, of track: NotchMedia.Track) -> TimeInterval {
-        guard width > 0 else { return 0 }
-        return min(max(x / width, 0), 1) * track.duration
+        .frame(height: 16)
     }
 
     private func timeCode(_ time: TimeInterval) -> some View {
@@ -234,15 +229,49 @@ struct NotchMediaView: View {
             : String(format: "%d:%02d", minutes, seconds)
     }
 
+    // MARK: - Громкость
+
+    /// Сверху динамик — по нему звук глушится, под ним толстая полоса без кружка,
+    /// растёт снизу вверх, как громкость в Пункте управления.
+    /// Полоса — на две трети высоты раздела: во всю высоту она стояла столбом.
+    private func volumeControl(height: CGFloat) -> some View {
+        VStack(spacing: 8) {
+            Image(systemName: speakerSymbol)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.white)
+                .frame(width: 24, height: 18)
+                .contentShape(Rectangle())
+                .onTapGesture { volume.toggleMute() }
+                .help(volume.isMuted ? "Включить звук" : "Выключить звук")
+
+            NotchSlider(axis: .vertical, fraction: CGFloat(volume.isMuted ? 0 : volume.level),
+                        isActive: adjustingVolume, thickness: 10, showsThumb: false) { value, ended in
+                adjustingVolume = !ended
+                volume.setLevel(Float(value))
+                controller.setInteractionLocked(!ended)
+            }
+            .frame(height: max(height * 2 / 3 - 26, 30))
+        }
+        .frame(width: 24)
+        .frame(maxHeight: .infinity, alignment: .center)
+    }
+
+    private var speakerSymbol: String {
+        if volume.isMuted || volume.level == 0 { return "speaker.slash.fill" }
+        return volume.level < 0.33 ? "speaker.wave.1.fill"
+            : volume.level < 0.66 ? "speaker.wave.2.fill" : "speaker.wave.3.fill"
+    }
+
     // MARK: - Кнопки
 
+    /// Пауза по центру, предыдущий и следующий разнесены по сторонам от неё.
     private var controls: some View {
-        HStack(spacing: 14) {
-            control(index: 0, name: "backward.fill", size: 12) { media.previousTrack() }
-            control(index: 1, name: media.isPlaying ? "pause.fill" : "play.fill", size: 15) {
+        HStack(spacing: 22) {
+            control(index: 0, name: "backward.fill", size: 24) { media.previousTrack() }
+            control(index: 1, name: media.isPlaying ? "pause.fill" : "play.fill", size: 34) {
                 media.togglePlayPause()
             }
-            control(index: 2, name: "forward.fill", size: 12) { media.nextTrack() }
+            control(index: 2, name: "forward.fill", size: 24) { media.nextTrack() }
         }
         .frame(maxWidth: .infinity, alignment: .center)
     }
@@ -251,7 +280,7 @@ struct NotchMediaView: View {
                          action: @escaping () -> Void) -> some View {
         Image(systemName: name)
             .font(.system(size: size, weight: .medium))
-            .frame(width: size + 16, height: size + 16)
+            .frame(width: size + 12, height: size + 12)
             .background {
                 Circle().fill(Color.primary.opacity(hoveredControl == index ? 0.12 : 0))
             }
@@ -260,5 +289,82 @@ struct NotchMediaView: View {
                 hoveredControl = hovering ? index : (hoveredControl == index ? nil : hoveredControl)
             }
             .onTapGesture(perform: action)
+    }
+}
+
+/// Полоса для перемотки и для громкости.
+///
+/// Своя, а не системный Slider: окно панели никогда не активно, и готовые элементы
+/// управления в нём ведут себя ненадёжно. У перемотки кружок виден всегда и чуть толще
+/// полосы, под курсором подрастает. У громкости кружка нет — сама полоса толстая.
+struct NotchSlider: View {
+
+    let axis: Axis
+    /// Заполненная доля, 0...1.
+    let fraction: CGFloat
+    /// Тянут прямо сейчас — кружок крупнее.
+    let isActive: Bool
+    var thickness: CGFloat = 4
+    var showsThumb = true
+    /// Новая доля и признак того, что палец отпущен.
+    let onChange: (CGFloat, Bool) -> Void
+
+    @State private var isHovered = false
+
+    /// Тонкую полосу трудно поймать курсором — ловим на всю эту ширину.
+    private var hitArea: CGFloat { max(thickness, 16) }
+
+    var body: some View {
+        GeometryReader { geometry in
+            let length = axis == .horizontal ? geometry.size.width : geometry.size.height
+            let thumb: CGFloat = showsThumb ? (isActive ? 14 : (isHovered ? 13 : 11)) : 0
+            let clamped = min(max(fraction, 0), 1)
+            // Кружок не должен вылезать за концы полосы, поэтому ездит по укороченной.
+            let thumbOffset = (length - thumb) * clamped
+            let filled = showsThumb ? thumbOffset + thumb / 2 : length * clamped
+
+            ZStack(alignment: axis == .horizontal ? .leading : .bottom) {
+                Capsule().fill(Color.white.opacity(0.25))
+                    .frame(width: axis == .horizontal ? length : thickness,
+                           height: axis == .horizontal ? thickness : length)
+
+                // Без своей обрезки капсула короче собственной толщины сплющилась бы
+                // в овал — внизу громкости это видно.
+                Rectangle().fill(Color.white)
+                    .frame(width: axis == .horizontal ? filled : thickness,
+                           height: axis == .horizontal ? thickness : filled)
+                    .frame(width: axis == .horizontal ? length : thickness,
+                           height: axis == .horizontal ? thickness : length,
+                           alignment: axis == .horizontal ? .leading : .bottom)
+                    .clipShape(Capsule())
+
+                if showsThumb {
+                    Circle()
+                        .fill(Color.white)
+                        .shadow(color: .black.opacity(0.35), radius: 2, y: 1)
+                        .frame(width: thumb, height: thumb)
+                        .offset(x: axis == .horizontal ? thumbOffset : 0,
+                                y: axis == .horizontal ? 0 : -thumbOffset)
+                }
+            }
+            .frame(width: geometry.size.width, height: geometry.size.height,
+                   alignment: axis == .horizontal ? .leading : .bottom)
+            .contentShape(Rectangle())
+            .onHover { isHovered = $0 }
+            .animation(.easeOut(duration: 0.12), value: thumb)
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { onChange(value(at: $0.location, length: length), false) }
+                    .onEnded { onChange(value(at: $0.location, length: length), true) }
+            )
+        }
+        .frame(width: axis == .vertical ? hitArea : nil, height: axis == .horizontal ? hitArea : nil)
+    }
+
+    private func value(at location: CGPoint, length: CGFloat) -> CGFloat {
+        guard length > 0 else { return 0 }
+        // Вертикальная растёт снизу вверх, а координаты SwiftUI — сверху вниз.
+        let raw = axis == .horizontal ? location.x / length : 1 - location.y / length
+        return min(max(raw, 0), 1)
     }
 }

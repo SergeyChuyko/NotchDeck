@@ -16,7 +16,8 @@ enum NotchConfig {
     /// пустоты. Теперь, когда в списке одни значки, высота строки наша собственная,
     /// и весь список считается точно — новый раздел учтётся сам.
     static var sectionListHeight: CGFloat {
-        let count = CGFloat(NotchSection.allCases.count)
+        // Пять строк, а не все разделы: настройки шестой строкой уходят под прокрутку.
+        let count = CGFloat(min(NotchSection.allCases.count, visibleSectionRows))
         return sectionRowHeight * count + sectionRowSpacing * (count - 1)
     }
 
@@ -43,6 +44,7 @@ enum NotchConfig {
     static let sidebarWidth: CGFloat = 34
     static let sectionRowHeight: CGFloat = 30
     static let sectionRowSpacing: CGFloat = 4
+    static let visibleSectionRows = 5
 
     /// Насколько зона наведения выступает за края свёрнутой плашки.
     /// Небольшой запас снизу нужен, чтобы курсор ловился ещё на подлёте к чёлке.
@@ -69,6 +71,12 @@ enum NotchConfig {
     /// Обложка альбома квадратная, а превью видео широкое. Шире этого не растягиваем.
     static let mediaArtworkMaxAspect: CGFloat = 2
 
+    /// Обложка в разделе «Плеер». Не на всю высоту раздела: иначе она забирала
+    /// себе половину плашки, а названию и кнопкам оставалось тесно.
+    static let playerArtworkHeight: CGFloat = 96
+    /// Отступ полосы перемотки и громкости от низа раздела.
+    static let playerBottomInset: CGFloat = 10
+
     static func mediaArtworkHeight(notchHeight: CGFloat) -> CGFloat {
         notchHeight - mediaArtworkInset * 2
     }
@@ -80,11 +88,36 @@ enum NotchConfig {
         mediaWingPadding + mediaArtworkHeight(notchHeight: notchHeight) * mediaArtworkMaxAspect + 5
     }
 
-    static func collapsedSize(notchSize: CGSize, media: Bool) -> CGSize {
-        guard media else { return notchSize }
-        let wing = mediaWingWidth(notchHeight: notchSize.height)
+    /// Крыло под громкость: слева значок и «Sound», справа полоса той же ширины.
+    static let volumeHUDWingWidth: CGFloat = 78
+    /// Сколько громкость держится на чёлке после последнего изменения.
+    static let volumeHUDDuration: TimeInterval = 1.5
+
+    /// - Parameter volumeHUD: громкость важнее плеера — пока её меняют, крылья её.
+    static func collapsedSize(notchSize: CGSize, media: Bool, volumeHUD: Bool = false) -> CGSize {
+        let wing: CGFloat
+        if volumeHUD {
+            wing = volumeHUDWingWidth
+        } else if media {
+            wing = mediaWingWidth(notchHeight: notchSize.height)
+        } else {
+            return notchSize
+        }
         return CGSize(width: notchSize.width + wing * 2, height: notchSize.height)
     }
+
+    // MARK: - Приветствие
+
+    /// Окошко с «hello» при первом запуске: только спускается вниз, в ширину не растёт —
+    /// ширина та, что у чёлки сейчас (с крыльями плеера, если они есть).
+    static func greetingSize(width: CGFloat, notchHeight: CGFloat) -> CGSize {
+        CGSize(width: width, height: notchHeight + 84)
+    }
+
+    /// Сколько пишется «hello» и сколько потом висит, прежде чем уехать обратно.
+    static let greetingWriteDuration: TimeInterval = 1.8
+    static let greetingHoldDuration: TimeInterval = 1.6
+    static let greetingBottomRadius: CGFloat = 18
 
     /// Непрерывное скругление тянется вдоль стороны дальше своего радиуса — замерено
     /// по системному пути, ровно 1.529. Столько места нужно «уху» снаружи плашки.
@@ -157,4 +190,10 @@ enum NotchConfig {
     /// Звёздочка избранного и английский текст в списке избранного. Тёплый оранжево-жёлтый:
     /// звёздочка должна читаться как «отмечено», а не как предупреждение.
     static let favoriteYellow = Color(red: 253 / 255, green: 191 / 255, blue: 125 / 255)
+
+    /// Значок и «Sound» на чёлке, когда звук выключен. Тот же красный, что у иконки приложения.
+    static let volumeRed = Color(red: 0.95, green: 0.33, blue: 0.29)
+
+    /// Включённые переключатели в настройках.
+    static let settingsOrange = Color(red: 1, green: 0.58, blue: 0.2)
 }

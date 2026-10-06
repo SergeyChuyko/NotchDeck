@@ -55,6 +55,9 @@ final class NotchWindowController {
     private let media = NotchMedia()
     private let battery = NotchBattery()
     private let system = NotchSystemControls()
+    private let volume = NotchVolume()
+    private let volumeKeys = NotchVolumeKeys()
+    private let settings = NotchSettings()
 
     private var panel: NotchPanel?
     private var hostingView: PassthroughHostingView<NotchRootView>?
@@ -63,6 +66,8 @@ final class NotchWindowController {
     private var tallShrinkWorkItem: DispatchWorkItem?
     private var playbackObservers: Set<AnyCancellable> = []
     private var resignActiveObserver: NSObjectProtocol?
+    private var volumeHUDHideWork: DispatchWorkItem?
+    private var greetingWork: DispatchWorkItem?
 
     // MARK: - Жизненный цикл
 
@@ -117,28 +122,109 @@ final class NotchWindowController {
         media.start()
         battery.start()
         system.start()
+        volume.start()
         watchPlayback()
+        watchVolume()
 
+        if settings.greetsOnLaunch {
+            // Небольшая пауза: пусть приложение доподнимется и меню-бар успокоится.
+            scheduleGreeting(after: 0.8)
+        }
     }
 
     /// Пока жива сессия плеера, чёлка шире — вместе с ней должна меняться и зона, которой
-    /// окно ловит мышь. Значение берём из подписки: @Published сообщает об изменении
-    /// до того, как оно применится, и media.track здесь был бы ещё прежним.
+    /// окно ловит мышь. Если в настройках выключен плеер на паузе, крылья живут только
+    /// пока что-то играет.
     private func watchPlayback() {
-        media.$track
-            .map { $0 != nil }
+        Publishers.CombineLatest3(media.$track.map { $0 != nil },
+                                  media.$isPlaying,
+                                  settings.$showsPausedPlayer)
+            .map { hasSession, isPlaying, showsPaused in hasSession && (isPlaying || showsPaused) }
             .removeDuplicates()
-            .dropFirst()
-            .sink { [weak self] hasSession in
-                guard let self, let metrics = self.metrics, !self.controller.isExpanded else { return }
-                self.applyWindowSize(
-                    self.collapsedWindowSize(for: metrics),
-                    panelSize: self.collapsedPanelSize(for: metrics,
-                                                       hinted: self.controller.isHinted,
-                                                       media: hasSession)
-                )
+            .sink { [weak self] visible in
+                guard let self else { return }
+                self.controller.setMediaWings(visible)
+                self.refreshCollapsedWindow()
             }
             .store(in: &playbackObservers)
+    }
+
+    /// Громкость поменяли клавишами или в меню-баре — показываем её в крыльях чёлки.
+    private func watchVolume() {
+        volume.onExternalChange = { [weak self] in
+            self?.showVolumeHUD()
+        }
+        // Клавиши громкости до системы не доходят — громкость меняем мы,
+        // и индикатор виден только на чёлке.
+        volumeKeys.onKey = { [weak self] key, fine in
+            guard let self else { return }
+            switch key {
+            case .up: self.volume.step(up: true, fine: fine)
+            case .down: self.volume.step(up: false, fine: fine)
+            case .mute: self.volume.toggleMute()
+            }
+            self.showVolumeHUD()
+        }
+        volumeKeys.start()
+    }
+
+    private func showVolumeHUD() {
+        // Раскрытая плашка закрывает чёлку, а на приветствии крылья заняты «hello».
+        guard !controller.isExpanded, !controller.isGreeting else { return }
+
+        controller.setVolumeHUD(true)
+        refreshCollapsedWindow()
+
+        // Каждое новое нажатие продлевает показ — держится, пока громкость крутят.
+        volumeHUDHideWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.controller.setVolumeHUD(false)
+            self.refreshCollapsedWindow()
+        }
+        volumeHUDHideWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + NotchConfig.volumeHUDDuration, execute: work)
+    }
+
+    // MARK: - Приветствие
+
+    private func scheduleGreeting(after delay: TimeInterval) {
+        greetingWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.startGreeting() }
+        greetingWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+
+    /// «hello» спускается из чёлки, пишется, висит и уезжает обратно.
+    /// Окно, как и при раскрытии, растёт до анимации, а ужимается после неё.
+    private func startGreeting() {
+        guard let metrics, !controller.isExpanded, !controller.isGreeting else { return }
+
+        volumeHUDHideWork?.cancel()
+        controller.setVolumeHUD(false)
+        applyWindowSize(expandedWindowSize(tall: false),
+                        panelSize: NotchConfig.greetingSize(
+                            width: collapsedPanelSize(for: metrics, hinted: false).width,
+                            notchHeight: metrics.notchSize.height))
+
+        DispatchQueue.main.async { [weak self] in
+            self?.controller.setGreeting(true)
+        }
+
+        let visibleFor = NotchConfig.greetingWriteDuration + 0.25 + NotchConfig.greetingHoldDuration
+        DispatchQueue.main.asyncAfter(deadline: .now() + visibleFor) { [weak self] in
+            guard let self else { return }
+            self.controller.setGreeting(false)
+            self.scheduleWindowShrink()
+        }
+    }
+
+    /// Пересчитать зону, которой свёрнутое окно ловит мышь, под нынешнюю ширину чёлки:
+    /// крылья плеера, громкость, подросшая под курсором.
+    private func refreshCollapsedWindow() {
+        guard let metrics, !controller.isExpanded, !controller.isGreeting else { return }
+        applyWindowSize(collapsedWindowSize(for: metrics),
+                        panelSize: collapsedPanelSize(for: metrics, hinted: controller.isHinted))
     }
 
     /// Поля ввода активируют приложение — иначе клавиатура до них не доходит. Поэтому клик
@@ -183,8 +269,7 @@ final class NotchWindowController {
                             panelSize: metrics.expandedSize(tall: controller.isTall))
         } else {
             applyWindowSize(collapsedWindowSize(for: metrics),
-                            panelSize: collapsedPanelSize(for: metrics, hinted: controller.isHinted,
-                                                          media: media.track != nil))
+                            panelSize: collapsedPanelSize(for: metrics, hinted: controller.isHinted))
         }
     }
 
@@ -193,9 +278,16 @@ final class NotchWindowController {
     /// Размер окна меняем по краям анимации, а не внутри неё: перед раскрытием — сразу,
     /// после закрытия — когда пружина доиграет.
     private func bindController() {
+        controller.requestGreeting = { [weak self] in
+            guard let self else { return }
+            self.controller.collapse()
+            // Сначала плашка доиграет закрытие, потом спустится «hello».
+            self.scheduleGreeting(after: 0.6)
+        }
         controller.willExpand = { [weak self] in
             guard let self else { return }
             self.collapseWorkItem?.cancel()
+            self.volumeHUDHideWork?.cancel()
             // Панель открывают на секунду — состояние плеера должно быть свежим сразу.
             self.media.refresh()
             self.screenshots.refresh()
@@ -232,8 +324,7 @@ final class NotchWindowController {
             // Именно из параметра, а не из controller.isHinted: на расширении зоны колбэк
             // приходит раньше, чем меняется сам флаг, — иначе зона осталась бы прежней.
             self.applyWindowSize(self.collapsedWindowSize(for: metrics),
-                                 panelSize: self.collapsedPanelSize(for: metrics, hinted: hinted,
-                                                                    media: self.media.track != nil))
+                                 panelSize: self.collapsedPanelSize(for: metrics, hinted: hinted))
         }
     }
 
@@ -241,10 +332,9 @@ final class NotchWindowController {
     private func scheduleWindowShrink() {
         guard let metrics else { return }
         let work = DispatchWorkItem { [weak self] in
-            guard let self, !self.controller.isExpanded else { return }
+            guard let self, !self.controller.isExpanded, !self.controller.isGreeting else { return }
             self.applyWindowSize(self.collapsedWindowSize(for: metrics),
-                                 panelSize: self.collapsedPanelSize(for: metrics, hinted: self.controller.isHinted,
-                                                                    media: self.media.track != nil))
+                                 panelSize: self.collapsedPanelSize(for: metrics, hinted: self.controller.isHinted))
         }
         collapseWorkItem = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.55, execute: work)
@@ -265,10 +355,12 @@ final class NotchWindowController {
     // MARK: - Геометрия окна
 
     /// Какого размера сейчас свёрнутая плашка: обычная чёлка, расширенная под играющий
-    /// трек, подросшая под курсором — или всё сразу.
-    private func collapsedPanelSize(for metrics: NotchScreenMetrics,
-                                    hinted: Bool, media: Bool) -> CGSize {
-        let base = NotchConfig.collapsedSize(notchSize: metrics.notchSize, media: media)
+    /// трек или громкость, подросшая под курсором — или всё сразу.
+    private func collapsedPanelSize(for metrics: NotchScreenMetrics, hinted: Bool,
+                                    media: Bool? = nil, volumeHUD: Bool? = nil) -> CGSize {
+        let base = NotchConfig.collapsedSize(notchSize: metrics.notchSize,
+                                             media: media ?? controller.showsMediaWings,
+                                             volumeHUD: volumeHUD ?? controller.isVolumeHUDVisible)
         return hinted ? NotchConfig.hintedSize(for: base, notchSize: metrics.notchSize) : base
     }
 
@@ -276,7 +368,10 @@ final class NotchWindowController {
     /// Оно прозрачное, лишнего не видно, зато ни расширение под трек, ни подрастание
     /// не требуют менять frame окна: это здесь самая хрупкая операция.
     private func collapsedWindowSize(for metrics: NotchScreenMetrics) -> CGSize {
-        let widest = collapsedPanelSize(for: metrics, hinted: true, media: true)
+        let withMedia = collapsedPanelSize(for: metrics, hinted: true, media: true, volumeHUD: false)
+        let withVolume = collapsedPanelSize(for: metrics, hinted: true, media: false, volumeHUD: true)
+        let widest = CGSize(width: max(withMedia.width, withVolume.width),
+                            height: max(withMedia.height, withVolume.height))
         // Места по бокам должно хватить и на «уши»: они рисуются за границами плашки,
         // и непрерывному скруглению их нужно полтора радиуса. Зона, ловящая мышь,
         // от этого не растёт — она считается отдельно, по hoverSlop.
@@ -336,6 +431,9 @@ final class NotchWindowController {
             media: media,
             battery: battery,
             system: system,
+            volume: volume,
+            volumeKeys: volumeKeys,
+            settings: settings,
             notchSize: metrics.notchSize,
             expandedSize: metrics.expandedSize
         )

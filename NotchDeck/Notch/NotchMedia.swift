@@ -22,6 +22,14 @@ final class NotchMedia: ObservableObject {
         let duration: TimeInterval
     }
 
+    /// Лайк есть не у каждого источника: его показывает только плеер, который сам
+    /// зарегистрировал такую команду. Видео в браузере её не публикует.
+    enum Like: Equatable {
+        case unavailable
+        case off
+        case on
+    }
+
     @Published private(set) var track: Track?
     @Published private(set) var artwork: NSImage?
     /// Цвет обложки — им красится эквалайзер на чёлке. Белый, пока обложки нет.
@@ -30,6 +38,7 @@ final class NotchMedia: ObservableObject {
     /// Позиция трека и момент, когда мост её прислал: между обновлениями досчитываем сами.
     @Published private(set) var elapsed: TimeInterval = 0
     @Published private(set) var elapsedAt = Date()
+    @Published private(set) var like: Like = .unavailable
     /// Мост не поднялся — показываем причину вместо плеера.
     @Published private(set) var failure: String?
 
@@ -40,6 +49,8 @@ final class NotchMedia: ObservableObject {
     private var applicationNames: [String: String] = [:]
     /// До этого момента позицию от моста игнорируем — см. `seek(to:)`.
     private var seekSettlesAt: Date = .distantPast
+    /// То же для лайка: плеер подтверждает отметку не сразу, и сердечко мигало бы обратно.
+    private var likeSettlesAt: Date = .distantPast
 
     /// Загрузчик для perl: подтягивает библиотеку и вызывает её точку входа.
     /// Ровно этот приём и обходит запрет — код исполняется внутри perl, а он подписан Apple.
@@ -112,6 +123,7 @@ final class NotchMedia: ObservableObject {
         artwork = nil
         artworkID = nil
         isPlaying = false
+        like = .unavailable
         failure = "Мост к плееру завершился. Перезапустите приложение."
     }
 
@@ -132,6 +144,15 @@ final class NotchMedia: ObservableObject {
     }
 
     func nextTrack() { send("next") }
+
+    func toggleLike() {
+        switch like {
+        case .unavailable: return
+        case .off: like = .on; send("like")
+        case .on: like = .off; send("unlike")
+        }
+        likeSettlesAt = Date().addingTimeInterval(1.5)
+    }
 
     func previousTrack() { send("previous") }
 
@@ -192,6 +213,7 @@ final class NotchMedia: ObservableObject {
             artwork = nil
             artworkID = nil
             isPlaying = false
+            like = .unavailable
 
         case "unavailable":
             failure = json["reason"] as? String ?? "Системный плеер недоступен."
@@ -209,6 +231,13 @@ final class NotchMedia: ObservableObject {
             if Date() >= seekSettlesAt {
                 elapsed = json["elapsed"] as? TimeInterval ?? 0
                 elapsedAt = Date()
+            }
+            if Date() >= likeSettlesAt {
+                switch json["like"] as? String {
+                case "on": like = .on
+                case "off": like = .off
+                default: like = .unavailable
+                }
             }
             applyArtwork(json)
         }

@@ -19,6 +19,15 @@ final class NotchController: ObservableObject {
         didSet { if selectedSection != oldValue { setTall(false) } }
     }
 
+    /// Крылья с плеером на свёрнутой чёлке. Решает окно — по сессии плеера и настройке.
+    @Published private(set) var showsMediaWings = false
+
+    /// Пока меняют громкость, крылья показывают её.
+    @Published private(set) var isVolumeHUDVisible = false
+
+    /// Идёт приветствие при первом запуске: плашка спустилась под чёлку и пишет «hello».
+    @Published private(set) var isGreeting = false
+
     /// Раскрытая плашка вытянута вниз — под варианты перевода или историю.
     @Published private(set) var isTall = false
 
@@ -39,6 +48,9 @@ final class NotchController: ObservableObject {
     /// зону, которая ловит мышь: держать её всегда по подросшей нельзя — вокруг чёлки
     /// живут пункты меню и иконки статус-бара, и лишняя мёртвая полоса съедала бы клики.
     var didChangeHint: ((Bool) -> Void)?
+
+    /// Показать приветствие ещё раз — кнопка в настройках. Окном занимается его контроллер.
+    var requestGreeting: (() -> Void)?
 
     /// Пауза действует только после закрытия кликом: курсор остаётся лежать на плашке,
     /// и без паузы она распахнулась бы обратно в тот же миг.
@@ -94,7 +106,8 @@ final class NotchController: ObservableObject {
     private func beginHint() {
         // Повторные «мышь здесь» прилетают и без движения курсора. Если на каждое
         // заводить отсчёт заново, он не истечёт никогда.
-        guard !isExpanded, hintWork == nil else { return }
+        // На приветствии плашка уже открыта под «hello» — раскрывать её поверх нельзя.
+        guard !isExpanded, !isGreeting, hintWork == nil else { return }
 
         setHinted(true)
 
@@ -147,10 +160,32 @@ final class NotchController: ObservableObject {
 
     // MARK: - Состояние
 
+    func setMediaWings(_ visible: Bool) {
+        guard showsMediaWings != visible else { return }
+        // Пружина та же, что у раскрытия, — крылья растут из чёлки так же, как плашка.
+        withAnimation(NotchConfig.openAnimation) { showsMediaWings = visible }
+    }
+
+    func setVolumeHUD(_ visible: Bool) {
+        guard isVolumeHUDVisible != visible else { return }
+        withAnimation(visible ? NotchConfig.openAnimation : NotchConfig.closeAnimation) {
+            isVolumeHUDVisible = visible
+        }
+    }
+
+    func setGreeting(_ greeting: Bool) {
+        guard isGreeting != greeting else { return }
+        withAnimation(greeting ? NotchConfig.openAnimation : NotchConfig.closeAnimation) {
+            isGreeting = greeting
+        }
+    }
+
     func expand() {
-        guard !isExpanded else { return }
+        guard !isExpanded, !isGreeting else { return }
         hintWork?.cancel()
         hintWork = nil
+        // Раскрытая плашка закрывает чёлку целиком — громкости там показывать негде.
+        isVolumeHUDVisible = false
         willExpand?()
         // Анимацию запускаем следующим тиком — к нему окно уже успело вырасти,
         // и раскрываться есть куда. Заодно withAnimation не попадает внутрь

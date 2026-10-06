@@ -11,6 +11,9 @@ struct NotchRootView: View {
     @ObservedObject var media: NotchMedia
     @ObservedObject var battery: NotchBattery
     @ObservedObject var system: NotchSystemControls
+    @ObservedObject var volume: NotchVolume
+    @ObservedObject var volumeKeys: NotchVolumeKeys
+    @ObservedObject var settings: NotchSettings
     let notchSize: CGSize
     let expandedSize: CGSize
 
@@ -31,12 +34,11 @@ struct NotchRootView: View {
         NotchShape(topRadius: topRadius, bottomRadius: bottomRadius)
             .fill(fillColor)
             .overlay(alignment: .top) { nowPlayingWings }
+            .overlay(alignment: .top) { volumeWings }
+            .overlay(alignment: .top) { greeting }
             .overlay(alignment: .top) { expandedContent }
             .clipShape(NotchShape(topRadius: topRadius, bottomRadius: bottomRadius))
             .frame(width: panelSize.width, height: panelSize.height)
-            // Ключ — именно наличие сессии, а не showsNowPlaying: тот меняется ещё и при
-            // раскрытии, и тогда этот модификатор перебивал бы анимацию закрытия своей.
-            .animation(NotchConfig.openAnimation, value: media.track != nil)
             .shadow(color: .black.opacity(controller.isExpanded ? 0.35 : 0), radius: 22, y: 10)
             // Запас вокруг плашки — чтобы курсор ловился чуть раньше, чем дойдёт до края.
             .padding(.horizontal, NotchConfig.hoverSlop.width)
@@ -60,12 +62,35 @@ struct NotchRootView: View {
         }
     }
 
-    /// Пока жива сессия плеера — не только пока он играет. На паузе крылья остаются,
-    /// иначе чёлка дёргалась бы туда-сюда на каждое нажатие пробела; замирает эквалайзер.
+    /// Пока жива сессия плеера, а если в настройках так решили — только пока он играет.
+    /// По умолчанию на паузе крылья остаются, иначе чёлка дёргалась бы туда-сюда
+    /// на каждое нажатие пробела; замирает эквалайзер.
     ///
     /// Только в свёрнутом виде: у раскрытой плашки для плеера есть целый раздел.
+    /// И не поверх громкости или приветствия — крылья в этот момент заняты ими.
     private var showsNowPlaying: Bool {
-        media.track != nil && !controller.isExpanded
+        controller.showsMediaWings && !controller.isExpanded
+            && !controller.isVolumeHUDVisible && !controller.isGreeting
+    }
+
+    @ViewBuilder
+    private var volumeWings: some View {
+        if controller.isVolumeHUDVisible && !controller.isExpanded && !controller.isGreeting {
+            NotchVolumeHUDView(volume: volume, notchHeight: notchSize.height)
+                .frame(width: panelSize.width)
+                .transition(.opacity)
+                .allowsHitTesting(false)
+        }
+    }
+
+    @ViewBuilder
+    private var greeting: some View {
+        if controller.isGreeting {
+            NotchGreetingView(notchHeight: notchSize.height)
+                .frame(width: panelSize.width, height: panelSize.height)
+                .transition(.opacity)
+                .allowsHitTesting(false)
+        }
     }
 
     private var expandedContent: some View {
@@ -77,6 +102,9 @@ struct NotchRootView: View {
             media: media,
             battery: battery,
             system: system,
+            volume: volume,
+            volumeKeys: volumeKeys,
+            settings: settings,
             topInset: notchSize.height,
             expandedSize: expandedSize
         )
@@ -93,8 +121,12 @@ struct NotchRootView: View {
 
     private var panelSize: CGSize {
         if controller.isExpanded { return currentExpandedSize }
-
-        let collapsed = NotchConfig.collapsedSize(notchSize: notchSize, media: media.track != nil)
+        let collapsed = NotchConfig.collapsedSize(notchSize: notchSize,
+                                                  media: controller.showsMediaWings,
+                                                  volumeHUD: controller.isVolumeHUDVisible)
+        if controller.isGreeting {
+            return NotchConfig.greetingSize(width: collapsed.width, notchHeight: notchSize.height)
+        }
         return controller.isHinted
             ? NotchConfig.hintedSize(for: collapsed, notchSize: notchSize)
             : collapsed
@@ -107,7 +139,9 @@ struct NotchRootView: View {
     }
 
     private var bottomRadius: CGFloat {
-        controller.isExpanded ? NotchConfig.expandedBottomRadius : NotchConfig.notchBottomRadius
+        if controller.isExpanded { return NotchConfig.expandedBottomRadius }
+        if controller.isGreeting { return NotchConfig.greetingBottomRadius }
+        return NotchConfig.notchBottomRadius
     }
 
     private var topRadius: CGFloat {

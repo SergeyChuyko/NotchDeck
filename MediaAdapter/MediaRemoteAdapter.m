@@ -25,6 +25,11 @@ typedef CFStringRef (*MRClientBundleIdentifier)(id);
 typedef void (*MRRegisterForNotifications)(dispatch_queue_t);
 typedef Boolean (*MRSendCommand)(uint32_t, CFDictionaryRef);
 typedef void (*MRSetElapsedTime)(double);
+typedef void *(*MRGetLocalOrigin)(void);
+typedef void (*MRGetSupportedCommandsForOrigin)(void *, dispatch_queue_t, void (^)(CFArrayRef));
+typedef uint32_t (*MRCommandInfoGetCommand)(id);
+typedef Boolean (*MRCommandInfoGetEnabled)(id);
+typedef CFTypeRef (*MRCommandInfoCopyValueForKey)(id, CFStringRef);
 
 // Коды команд плеера.
 enum {
@@ -33,6 +38,9 @@ enum {
     kCommandTogglePlayPause = 2,
     kCommandNextTrack = 4,
     kCommandPreviousTrack = 5,
+    // «Нравится» — то, что в MPRemoteCommandCenter зовётся likeCommand. Регистрирует его
+    // далеко не каждый плеер: Музыка да, видео в браузере — нет.
+    kCommandLikeTrack = 0x6A,
 };
 
 static MRGetNowPlayingInfo gGetNowPlayingInfo;
@@ -40,6 +48,18 @@ static MRGetNowPlayingClient gGetNowPlayingClient;
 static MRClientBundleIdentifier gClientBundleIdentifier;
 static MRSendCommand gSendCommand;
 static MRSetElapsedTime gSetElapsedTime;
+
+// Лайк — необязательная часть: не нашлись эти символы, значит кнопки просто не будет,
+// а остальной плеер продолжит работать.
+static MRGetLocalOrigin gGetLocalOrigin;
+static MRGetSupportedCommandsForOrigin gGetSupportedCommands;
+static MRCommandInfoGetCommand gCommandInfoGetCommand;
+static MRCommandInfoGetEnabled gCommandInfoGetEnabled;
+static MRCommandInfoCopyValueForKey gCommandInfoCopyValue;
+/// Ключ «команда сейчас включена» — у лайка это «трек уже отмечен».
+static CFStringRef gIsActiveKey;
+/// Опция «отменить»: тот же лайк с ней снимает отметку, а не ставит дизлайк.
+static CFStringRef gIsNegativeOption;
 
 /// Идентификатор последней отправленной обложки: сама картинка едет только когда сменилась.
 static NSString *gSentArtworkID;
@@ -66,7 +86,26 @@ static double doubleValue(NSDictionary *info, NSString *key) {
     return [value respondsToSelector:@selector(doubleValue)] ? [value doubleValue] : 0;
 }
 
-static void emit(NSDictionary *info, NSString *application) {
+/// Состояние лайка для текущего источника: «none» — плеер такой команды не знает,
+/// «off» — можно отметить, «on» — уже отмечено.
+static NSString *likeState(CFArrayRef commands) {
+    if (!commands || !gCommandInfoGetCommand) return @"none";
+
+    for (id info in (__bridge NSArray *)commands) {
+        if (gCommandInfoGetCommand(info) != kCommandLikeTrack) continue;
+        if (gCommandInfoGetEnabled && !gCommandInfoGetEnabled(info)) return @"none";
+
+        CFTypeRef active = gIsActiveKey && gCommandInfoCopyValue
+            ? gCommandInfoCopyValue(info, gIsActiveKey) : NULL;
+        BOOL liked = active && [(__bridge id)active respondsToSelector:@selector(boolValue)]
+            && [(__bridge id)active boolValue];
+        if (active) CFRelease(active);
+        return liked ? @"on" : @"off";
+    }
+    return @"none";
+}
+
+static void emit(NSDictionary *info, NSString *application, NSString *like) {
     NSString *title = stringValue(info, @"kMRMediaRemoteNowPlayingInfoTitle");
     NSString *artist = stringValue(info, @"kMRMediaRemoteNowPlayingInfoArtist");
 
@@ -103,6 +142,7 @@ static void emit(NSDictionary *info, NSString *application) {
     line[@"app"] = application ?: @"";
     line[@"duration"] = @(doubleValue(info, @"kMRMediaRemoteNowPlayingInfoDuration"));
     line[@"elapsed"] = @(MAX(elapsed, 0));
+    line[@"like"] = like;
 
     id rawID = info[@"kMRMediaRemoteNowPlayingInfoArtworkIdentifier"];
     NSData *artwork = info[@"kMRMediaRemoteNowPlayingInfoArtworkData"];
@@ -131,7 +171,17 @@ static void requestEmit(void) {
         NSString *application = bundle ? (__bridge NSString *)bundle : nil;
 
         gGetNowPlayingInfo(dispatch_get_main_queue(), ^(CFDictionaryRef info) {
-            emit(info ? (__bridge NSDictionary *)info : @{}, application);
+            NSDictionary *dictionary = info ? (__bridge NSDictionary *)info : @{};
+
+            if (!gGetLocalOrigin || !gGetSupportedCommands) {
+                emit(dictionary, application, @"none");
+                return;
+            }
+            // Третий вложенный запрос: какие команды понимает плеер. По нему и решаем,
+            // показывать ли лайк, — и заодно узнаём, отмечен ли уже трек.
+            gGetSupportedCommands(gGetLocalOrigin(), dispatch_get_main_queue(), ^(CFArrayRef commands) {
+                emit(dictionary, application, likeState(commands));
+            });
         });
     });
 }
@@ -164,6 +214,18 @@ static void runCommandLoop(void) {
         }
 
         uint32_t command = UINT32_MAX;
+        // «like» / «unlike» — одна и та же команда, отмена идёт опцией.
+        BOOL unlike = strncmp(buffer, "unlike", 6) == 0;
+        if (unlike || strncmp(buffer, "like", 4) == 0) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                NSDictionary *options = unlike && gIsNegativeOption
+                    ? @{ (__bridge NSString *)gIsNegativeOption: @YES } : nil;
+                gSendCommand(kCommandLikeTrack, (__bridge CFDictionaryRef)options);
+                scheduleEmit(0.5);
+            });
+            continue;
+        }
+
         if (strncmp(buffer, "toggle", 6) == 0) command = kCommandTogglePlayPause;
         else if (strncmp(buffer, "next", 4) == 0) command = kCommandNextTrack;
         else if (strncmp(buffer, "previous", 8) == 0) command = kCommandPreviousTrack;
@@ -212,6 +274,18 @@ void notchdeck_media_run(void *perlInterpreter, void *cv) {
         exit(1);
     }
 
+    gGetLocalOrigin = (MRGetLocalOrigin)dlsym(handle, "MRMediaRemoteGetLocalOrigin");
+    gGetSupportedCommands =
+        (MRGetSupportedCommandsForOrigin)dlsym(handle, "MRMediaRemoteGetSupportedCommandsForOrigin");
+    gCommandInfoGetCommand = (MRCommandInfoGetCommand)dlsym(handle, "MRMediaRemoteCommandInfoGetCommand");
+    gCommandInfoGetEnabled = (MRCommandInfoGetEnabled)dlsym(handle, "MRMediaRemoteCommandInfoGetEnabled");
+    gCommandInfoCopyValue =
+        (MRCommandInfoCopyValueForKey)dlsym(handle, "MRMediaRemoteCommandInfoCopyValueForKey");
+    CFStringRef *activeKey = dlsym(handle, "kMRMediaRemoteCommandInfoIsActiveKey");
+    CFStringRef *negativeOption = dlsym(handle, "kMRMediaRemoteOptionIsNegative");
+    gIsActiveKey = activeKey ? *activeKey : NULL;
+    gIsNegativeOption = negativeOption ? *negativeOption : NULL;
+
     registerForNotifications(dispatch_get_main_queue());
 
     NSArray<NSString *> *notifications = @[
@@ -219,6 +293,8 @@ void notchdeck_media_run(void *perlInterpreter, void *cv) {
         @"kMRMediaRemoteNowPlayingApplicationIsPlayingDidChangeNotification",
         @"kMRMediaRemoteNowPlayingApplicationClientStateDidChange",
         @"kMRNowPlayingPlaybackQueueChangedNotification",
+        // Лайк поставили в самом плеере — сердечко у нас должно это увидеть.
+        @"kMRMediaRemoteSupportedCommandsDidChangeNotification",
     ];
     for (NSString *name in notifications) {
         [NSNotificationCenter.defaultCenter addObserverForName:name

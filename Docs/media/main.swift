@@ -63,11 +63,18 @@ struct Panel<Detail: View>: View {
     }
 
     private var title: some View {
-        Text(selected.title)
-            .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 16)
-            .frame(height: notchSize.height)
+        HStack(spacing: 4) {
+            Text(selected.title)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.secondary)
+            // У скриншотов рядом с заголовком — синяя папка, как в приложении.
+            if selected == .screenshots {
+                Image(systemName: "folder.fill").font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(NotchConfig.accentBlue).frame(width: 20, height: 20)
+            }
+        }
+        .padding(.horizontal, 16)
+        .frame(height: notchSize.height)
     }
 
     private var statusBar: some View {
@@ -89,9 +96,19 @@ struct Panel<Detail: View>: View {
         .frame(height: notchSize.height)
     }
 
+    /// Видно пять строк, настройки шестой — под прокруткой. Когда открыты настройки,
+    /// список прокручен вниз; когда панель вытянута, видно всё.
+    private var visibleSections: [NotchSection] {
+        let all = NotchSection.allCases
+        let tall = size.height > expandedSize.height
+        if tall { return Array(all) }
+        return selected == .settings ? Array(all.suffix(NotchConfig.visibleSectionRows))
+                                     : Array(all.prefix(NotchConfig.visibleSectionRows))
+    }
+
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: NotchConfig.sectionRowSpacing) {
-            ForEach(NotchSection.allCases) { section in
+            ForEach(visibleSections) { section in
                 Image(systemName: section.systemImage)
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(section.tint ?? Color.white.opacity(section == selected ? 1 : 0.6))
@@ -114,6 +131,7 @@ func detail(for section: NotchSection) -> some View {
     case .screenshots: MockShots()
     case .clipboard: MockClipboard()
     case .translator: MockTranslator()
+    case .settings: MockSettings()
     }
 }
 
@@ -184,6 +202,32 @@ struct Hero: View {
     }
 }
 
+/// Верх экрана с меню-баром и чёлкой — фон для анимаций громкости и приветствия.
+struct Screen<Notch: View>: View {
+    let height: CGFloat
+    @ViewBuilder let notch: Notch
+
+    var body: some View {
+        ZStack(alignment: .top) {
+            Color(red: 0.13, green: 0.14, blue: 0.17)
+            HStack(spacing: 14) {
+                Image(systemName: "apple.logo").font(.system(size: 12))
+                Text("Finder").font(.system(size: 12, weight: .semibold))
+                Spacer(minLength: 0)
+                Image(systemName: "wifi").font(.system(size: 11))
+                Image(systemName: "battery.75percent").font(.system(size: 13))
+                Text("11:24").font(.system(size: 12)).monospacedDigit()
+            }
+            .foregroundStyle(Color.white.opacity(0.75))
+            .padding(.horizontal, 16)
+            .frame(height: notchSize.height)
+            notch.frame(width: Hero.canvas.width, alignment: .center)
+        }
+        .frame(width: Hero.canvas.width, height: height, alignment: .top)
+        .environment(\.colorScheme, .dark)
+    }
+}
+
 // MARK: - Пружины
 
 /// Та же пружина, что у SwiftUI: response — период, dampingFraction — затухание.
@@ -238,6 +282,143 @@ MainActor.assumeIsolated {
 
     if let image = png(Still(section: .clipboard, size: tallSize) { MockClipboard(searchOpen: true) }) {
         write(image, to: "clipboard-search.png")
+    }
+
+    // Иконка приложения — для шапки README.
+    if let icon = NSImage(contentsOfFile: "/Users/sergeia.i./NotchDeck/NotchDeck/Assets.xcassets/AppIcon.appiconset/AppIcon_256.png"),
+       let cg = icon.cgImage(forProposedRect: nil, context: nil, hints: nil) {
+        write(cg, to: "icon.png")
+    }
+
+    @MainActor func gif(_ frames: [CGImage], fps: Double, to name: String) {
+        let url = outputDirectory.appendingPathComponent(name)
+        guard let destination = CGImageDestinationCreateWithURL(
+            url as CFURL, UTType.gif.identifier as CFString, frames.count, nil) else { return }
+        CGImageDestinationSetProperties(destination, [
+            kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFLoopCount: 0]
+        ] as CFDictionary)
+        for image in frames {
+            CGImageDestinationAddImage(destination, image, [
+                kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFDelayTime: 1 / fps]
+            ] as CFDictionary)
+        }
+        CGImageDestinationFinalize(destination)
+        print("· \(name) — кадров: \(frames.count)")
+    }
+
+    // MARK: Громкость на чёлке
+
+    do {
+        let fps = 25.0
+        let openAt = 0.35
+        /// Шаги клавишей: время нажатия и новый уровень. В конце — до нуля, звук выключен.
+        let steps: [(Double, CGFloat)] = [(0, 0.44), (0.75, 0.5), (1.0, 0.56), (1.25, 0.62),
+                                          (1.95, 0.44), (2.15, 0.25), (2.35, 0.06), (2.55, 0)]
+        let mutedAt = openAt + 2.55
+        let closeAt = mutedAt + 1.2
+        let duration = closeAt + 0.8
+        let hudSize = NotchConfig.collapsedSize(notchSize: notchSize, media: false, volumeHUD: true)
+
+        func level(at t: Double) -> CGFloat {
+            var value = steps[0].1
+            var previous = value
+            for (at, target) in steps where t >= openAt + at {
+                previous = value
+                value = target
+                let k = min(1, (t - openAt - at) / 0.12)
+                value = previous + (target - previous) * CGFloat(k)
+            }
+            return value
+        }
+
+        var frames: [CGImage] = []
+        var time = 0.0
+        while time < duration {
+            let size: CGSize
+            if time < openAt {
+                size = notchSize
+            } else if time < closeAt {
+                size = lerp(notchSize, hudSize, spring(time - openAt, response: 0.42, damping: 0.74))
+            } else {
+                size = lerp(hudSize, notchSize, spring(time - closeAt, response: 0.34, damping: 1))
+            }
+            // Тряска значка при выключении: -3, 3, -2.5, 2, 0 за четверть секунды.
+            var shake: CGFloat = 0
+            let s = time - mutedAt
+            if s > 0 && s < 0.26 {
+                let keys: [(Double, CGFloat)] = [(0, 0), (0.04, -3), (0.10, 3), (0.16, -2.5), (0.21, 2), (0.26, 0)]
+                for i in 1..<keys.count where s <= keys[i].0 {
+                    let k = (s - keys[i - 1].0) / (keys[i].0 - keys[i - 1].0)
+                    shake = keys[i - 1].1 + (keys[i].1 - keys[i - 1].1) * CGFloat(k)
+                    break
+                }
+            }
+            let showsHUD = time >= openAt && (time < closeAt || size.width > notchSize.width + 40)
+            let frame = Screen(height: 56) {
+                NotchShape(topRadius: NotchConfig.collapsedTopRadius, bottomRadius: NotchConfig.notchBottomRadius)
+                    .fill(Color.black)
+                    .frame(width: size.width, height: size.height)
+                    .overlay(alignment: .top) {
+                        if showsHUD {
+                            MockVolumeHUD(level: level(at: time), shake: shake, notchHeight: notchSize.height)
+                                .frame(width: size.width).clipped()
+                                .opacity(time >= closeAt ? max(0, 1 - (time - closeAt) * 4) : min(1, (time - openAt) * 6))
+                        }
+                    }
+            }
+            if let image = png(frame) { frames.append(image) }
+            time += 1 / fps
+        }
+        gif(frames, fps: fps, to: "volume.gif")
+    }
+
+    // MARK: Приветствие
+
+    do {
+        let fps = 25.0
+        let openAt = 0.4
+        let writeAt = openAt + 0.25
+        let closeAt = writeAt + NotchConfig.greetingWriteDuration + NotchConfig.greetingHoldDuration
+        let duration = closeAt + 0.8
+        let greeting = NotchConfig.greetingSize(width: notchSize.width, notchHeight: notchSize.height)
+
+        func easeInOut(_ x: Double) -> Double { x < 0.5 ? 2 * x * x : 1 - pow(-2 * x + 2, 2) / 2 }
+
+        var frames: [CGImage] = []
+        var time = 0.0
+        while time < duration {
+            let size: CGSize
+            if time < openAt {
+                size = notchSize
+            } else if time < closeAt {
+                size = lerp(notchSize, greeting, spring(time - openAt, response: 0.42, damping: 0.74))
+            } else {
+                size = lerp(greeting, notchSize, spring(time - closeAt, response: 0.34, damping: 1))
+            }
+            let progress = CGFloat(easeInOut(min(1, max(0, (time - writeAt) / NotchConfig.greetingWriteDuration))))
+            let opacity = time >= closeAt ? max(0, 1 - (time - closeAt) * 4) : 1
+            let frame = Screen(height: 150) {
+                NotchShape(topRadius: NotchConfig.collapsedTopRadius,
+                           bottomRadius: time > openAt ? NotchConfig.greetingBottomRadius : NotchConfig.notchBottomRadius)
+                    .fill(Color.black)
+                    .frame(width: size.width, height: size.height)
+                    .overlay(alignment: .top) {
+                        HelloShape()
+                            .trim(from: 0, to: progress)
+                            .stroke(Color.white, style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
+                            .padding(.horizontal, 18)
+                            .padding(.top, notchSize.height + 8)
+                            .padding(.bottom, 14)
+                            .frame(width: greeting.width, height: greeting.height)
+                            .frame(width: size.width, height: size.height, alignment: .top)
+                            .clipped()
+                            .opacity(opacity)
+                    }
+            }
+            if let image = png(frame) { frames.append(image) }
+            time += 1 / fps
+        }
+        gif(frames, fps: fps, to: "hello.gif")
     }
 
     // MARK: Кадры заставки

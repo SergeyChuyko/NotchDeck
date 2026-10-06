@@ -8,6 +8,8 @@ enum NotchSection: String, CaseIterable, Identifiable {
     case screenshots
     case clipboard
     case translator
+    /// Последней строкой, под переводчиком: это не раздел с содержимым, а настройки.
+    case settings
 
     var id: String { rawValue }
 
@@ -18,6 +20,7 @@ enum NotchSection: String, CaseIterable, Identifiable {
         case .screenshots: "Скриншоты"
         case .clipboard: "Буфер обмена"
         case .translator: "Переводчик"
+        case .settings: "Настройки"
         }
     }
 
@@ -34,6 +37,7 @@ enum NotchSection: String, CaseIterable, Identifiable {
         case .screenshots: "camera.viewfinder"
         case .clipboard: "doc.on.clipboard"
         case .translator: "character.bubble"
+        case .settings: "gearshape"
         }
     }
 }
